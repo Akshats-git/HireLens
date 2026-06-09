@@ -1,0 +1,38 @@
+stages:
+
+  ingest:
+    cmd: python -m src.data.data_pipeline --stage ingest
+    deps:
+      - src/data/ingestion.py
+      - src/data/data_pipeline.py
+      - configs/config.yaml
+    outs:
+      - data/raw/resumes_clean.csv
+      - data/raw/jobs_clean.csv
+    metrics:
+      - logs/dataset_distributions.json:
+          cache: false
+
+  preprocess:
+    cmd: python -m src.data.data_pipeline --stage preprocess
+    deps:
+      - src/data/preprocessing.py
+      - src/data/data_pipeline.py
+      - data/raw/resumes_clean.csv
+      - data/raw/jobs_clean.csv
+      - configs/config.yaml
+    outs:
+      - data/processed/resumes_processed.csv
+      - data/processed/jobs_processed.csv
+      - data/processed/train_pairs.csv
+      - data/processed/val_pairs.csv
+      - data/processed/test_pairs.csv
+
+  synthetic:
+    cmd: python -m src.data.data_pipeline --stage synthetic --n-pairs 500
+    deps:
+      - src/data/synthetic_gen.py
+      - src/data/data_pipeline.py
+      - configs/config.yaml
+    outs:
+      - data/synthetic/synthetic_pairs.csv
