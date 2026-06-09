@@ -1,0 +1,125 @@
+# =============================================================================
+# HireLens .gitignore
+# =============================================================================
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+
+# ── Virtual Environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.env.local
+.env.*.local
+
+# ── Environment / Secrets ─────────────────────────────────────────────────────
+.env
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials.json
+
+# ── ML / Model Artifacts ──────────────────────────────────────────────────────
+models/cache/
+models/fine_tuned/
+models/checkpoints/
+*.bin
+*.safetensors
+*.ot
+*.onnx
+*.pt
+*.pth
+!tests/**/*.pt        # Allow tiny test fixtures
+
+# ── Data (DVC manages these) ──────────────────────────────────────────────────
+data/raw/
+data/processed/
+data/synthetic/
+uploads/
+!data/.gitkeep
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/synthetic/.gitkeep
+
+# ── DVC ───────────────────────────────────────────────────────────────────────
+/tmp/
+.dvc/cache/
+.dvc/tmp/
+
+# ── MLflow ────────────────────────────────────────────────────────────────────
+mlflow/mlruns/
+mlflow/artifacts/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+logs/
+*.log
+*.log.*
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+nosetests.xml
+*.cover
+*.coverage.*
+
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/.nuxt/
+frontend/.cache/
+*.tsbuildinfo
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+*.tmp
+*.bak
+*.orig
+.cache/
