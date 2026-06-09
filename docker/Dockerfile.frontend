@@ -1,0 +1,42 @@
+# =============================================================================
+# HireLens Frontend — Multi-stage Dockerfile
+# Stage 1: builder  → Node.js build (Vite)
+# Stage 2: runtime  → Nginx serves static assets
+# =============================================================================
+
+# ── Stage 1: Builder ─────────────────────────────────────────────────────────
+FROM node:20.15.1-alpine AS builder
+
+ARG VITE_API_URL=http://localhost:8000
+ENV VITE_API_BASE_URL=${VITE_API_URL}
+
+WORKDIR /app
+
+# Install deps first (separate layer for cache efficiency)
+COPY package.json package-lock.json* ./
+RUN npm ci --prefer-offline
+
+# Copy source and build
+COPY . .
+RUN npm run build
+
+
+# ── Stage 2: Runtime (Nginx) ─────────────────────────────────────────────────
+FROM nginx:1.27.0-alpine AS runtime
+
+LABEL maintainer="HireLens Team"
+LABEL version="1.0.0"
+LABEL description="HireLens React Frontend"
+
+# Copy Vite build output
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Custom nginx config: SPA routing + gzip + security headers
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=20s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:3000 || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

@@ -1,0 +1,154 @@
+version: "3.9"
+
+# =============================================================================
+# HireLens — Docker Compose
+# Services: FastAPI backend, React frontend, PostgreSQL, MLflow
+# =============================================================================
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+networks:
+  hirelens-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  mlflow_data:
+  upload_data:
+  model_cache:
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16.3-alpine
+    container_name: hirelens-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hirelens}
+      POSTGRES_USER: ${POSTGRES_USER:-hirelens_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - hirelens-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hirelens_user} -d ${POSTGRES_DB:-hirelens}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *default-logging
+
+  # ── MLflow Tracking Server ──────────────────────────────────────────────────
+  mlflow:
+    image: python:3.12.3-slim
+    container_name: hirelens-mlflow
+    restart: unless-stopped
+    command: >
+      bash -c "pip install --no-cache-dir mlflow==2.14.3 boto3==1.34.144 psycopg2-binary==2.9.9 &&
+               mlflow server
+               --host 0.0.0.0
+               --port 5000
+               --backend-store-uri postgresql://${POSTGRES_USER:-hirelens_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hirelens}_mlflow
+               --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-/mlflow/artifacts}
+               --serve-artifacts"
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      MLFLOW_S3_ENDPOINT_URL: ${MLFLOW_S3_ENDPOINT_URL:-}
+    volumes:
+      - mlflow_data:/mlflow/artifacts
+    ports:
+      - "${MLFLOW_PORT:-5000}:5000"
+    networks:
+      - hirelens-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+
+  # ── FastAPI Backend ─────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+      args:
+        PYTHON_VERSION: "3.12.3"
+    container_name: hirelens-backend
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hirelens_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hirelens}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MODEL_CACHE_DIR: /app/models/cache
+    volumes:
+      - upload_data:/app/uploads
+      - model_cache:/app/models/cache
+      - ../logs:/app/logs
+    ports:
+      - "${API_PORT:-8000}:8000"
+    networks:
+      - hirelens-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    logging: *default-logging
+
+  # ── React Frontend ──────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../docker/Dockerfile.frontend
+      args:
+        VITE_API_URL: http://localhost:8000
+    container_name: hirelens-frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+      VITE_APP_ENV: ${APP_ENV:-development}
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    networks:
+      - hirelens-net
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging

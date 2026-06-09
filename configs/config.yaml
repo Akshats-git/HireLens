@@ -1,0 +1,181 @@
+# =============================================================================
+# HireLens — Master Configuration
+# All runtime overrides should be done via environment variables (.env).
+# This file defines defaults and structural parameters.
+# =============================================================================
+
+app:
+  name: HireLens
+  version: "1.0.0"
+  description: AI-powered Resume Screening and Job Matching System
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+paths:
+  data:
+    raw: data/raw
+    processed: data/processed
+    synthetic: data/synthetic
+  models:
+    cache: models/cache
+    fine_tuned: models/fine_tuned
+    checkpoints: models/checkpoints
+  uploads: uploads
+  logs: logs
+  mlflow_local: mlflow/mlruns
+
+# ── Model Configuration ───────────────────────────────────────────────────────
+model:
+  base:
+    name: sentence-transformers/all-MiniLM-L6-v2
+    max_seq_length: 512
+    embedding_dim: 384
+    device: auto                           # auto | cpu | cuda
+
+  fine_tuning:
+    output_dir: models/fine_tuned/hirelens_matcher
+    num_train_epochs: 5
+    per_device_train_batch_size: 32
+    per_device_eval_batch_size: 64
+    warmup_steps: 200
+    weight_decay: 0.01
+    learning_rate: 2.0e-5
+    lr_scheduler_type: cosine
+    save_strategy: epoch
+    evaluation_strategy: epoch
+    load_best_model_at_end: true
+    metric_for_best_model: eval_ndcg
+    fp16: true                             # Enable for GTX 1650
+    dataloader_num_workers: 4
+
+  ner:
+    model: en_core_web_trf
+    fallback_model: en_core_web_sm
+    batch_size: 128
+    skill_confidence_threshold: 0.75
+
+# ── Scoring Weights ───────────────────────────────────────────────────────────
+scoring:
+  weights:
+    skills_match: 0.40
+    experience_relevance: 0.30
+    education_fit: 0.15
+    keyword_alignment: 0.15
+
+  thresholds:
+    excellent: 85        # score >= 85 → Excellent match
+    good: 70             # score >= 70 → Good match
+    fair: 50             # score >= 50 → Fair match
+    poor: 0              # score < 50  → Poor match
+
+  experience:
+    # Maps years of experience to a level label
+    levels:
+      entry: [0, 2]
+      mid: [2, 5]
+      senior: [5, 10]
+      lead: [10, 999]
+
+  education:
+    # Degree hierarchy for gap scoring
+    degree_weights:
+      phd: 1.0
+      masters: 0.85
+      bachelors: 0.70
+      associate: 0.50
+      certification: 0.40
+      bootcamp: 0.30
+      none: 0.10
+
+# ── Semantic Similarity ───────────────────────────────────────────────────────
+similarity:
+  cosine_threshold: 0.55        # Minimum cosine sim to count as a match
+  top_k_keywords: 20            # Top-K keywords to extract per document
+  chunk_size: 256               # Token chunk size for long-resume handling
+  chunk_overlap: 32
+
+# ── Data Pipeline ─────────────────────────────────────────────────────────────
+data:
+  kaggle_dataset: gauravduttakiit/resume-dataset
+  linkedin_dataset: arshkon/linkedin-job-postings
+
+  preprocessing:
+    min_resume_chars: 200
+    max_resume_chars: 15000
+    remove_pii: true             # Strip phone/email/address before embedding
+    normalize_whitespace: true
+    lowercase_for_keywords: true
+
+  train_val_test_split: [0.80, 0.10, 0.10]
+  random_seed: 42
+
+  synthetic:
+    num_samples: 5000
+    noise_level: 0.15           # Fraction of tokens to perturb
+
+  augmentation:
+    enabled: true
+    synonym_replacement_prob: 0.1
+    skill_paraphrase_prob: 0.15
+
+# ── API ───────────────────────────────────────────────────────────────────────
+api:
+  max_upload_size_mb: 10
+  max_bulk_resumes: 50
+  request_timeout_seconds: 30
+  cache_embeddings: true
+  embedding_cache_ttl_seconds: 3600
+
+# ── MLflow ────────────────────────────────────────────────────────────────────
+mlflow:
+  experiment_name: hirelens-resume-matching
+  run_tags:
+    project: HireLens
+    team: ml-eng
+
+  metrics_to_log:
+    - precision_at_5
+    - ndcg_at_10
+    - ner_f1
+    - mean_reciprocal_rank
+    - map_at_10
+    - eval_loss
+    - train_loss
+
+  artifacts_to_log:
+    - confusion_matrix.png
+    - precision_recall_curve.png
+    - skill_extraction_report.json
+    - model_card.md
+
+# ── Evaluation ────────────────────────────────────────────────────────────────
+evaluation:
+  target_metrics:
+    precision_at_5: 0.85
+    ndcg_at_10: 0.80
+    ner_f1: 0.88
+
+  k_values: [1, 3, 5, 10]
+  num_eval_samples: 1000
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging:
+  level: INFO
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}"
+  rotation: "100 MB"
+  retention: "30 days"
+  serialize: false              # Set true in production for JSON logs
+
+# ── Database ──────────────────────────────────────────────────────────────────
+database:
+  pool_size: 10
+  max_overflow: 20
+  pool_timeout: 30
+  pool_recycle: 1800
+  echo: false                   # Set true for SQL query logging in dev
+
+# ── Docker Services ───────────────────────────────────────────────────────────
+services:
+  backend_port: 8000
+  frontend_port: 3000
+  postgres_port: 5432
+  mlflow_port: 5000
