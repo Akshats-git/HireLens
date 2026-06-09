@@ -1,5 +1,6 @@
 # =============================================================================
 # HireLens Frontend — Multi-stage Dockerfile
+# Build context: project root (so both frontend/ and docker/ are accessible)
 # Stage 1: builder  → Node.js build (Vite)
 # Stage 2: runtime  → Nginx serves static assets
 # =============================================================================
@@ -13,11 +14,11 @@ ENV VITE_API_BASE_URL=${VITE_API_URL}
 WORKDIR /app
 
 # Install deps first (separate layer for cache efficiency)
-COPY package.json package-lock.json* ./
+COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci --prefer-offline
 
-# Copy source and build
-COPY . .
+# Copy frontend source and build
+COPY frontend/ .
 RUN npm run build
 
 

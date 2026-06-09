@@ -1,7 +1,5 @@
-version: "3.9"
-
 # =============================================================================
-# HireLens — Docker Compose
+# HireLens — Docker Compose  (lives at project root alongside .env)
 # Services: FastAPI backend, React frontend, PostgreSQL, MLflow
 # =============================================================================
 
@@ -50,17 +48,17 @@ services:
 
   # ── MLflow Tracking Server ──────────────────────────────────────────────────
   mlflow:
-    image: python:3.12.3-slim
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.mlflow
     container_name: hirelens-mlflow
     restart: unless-stopped
-    command: >
-      bash -c "pip install --no-cache-dir mlflow==2.14.3 boto3==1.34.144 psycopg2-binary==2.9.9 &&
-               mlflow server
-               --host 0.0.0.0
-               --port 5000
-               --backend-store-uri postgresql://${POSTGRES_USER:-hirelens_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hirelens}_mlflow
-               --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-/mlflow/artifacts}
-               --serve-artifacts"
+    command:
+      - "--host=0.0.0.0"
+      - "--port=5000"
+      - "--backend-store-uri=postgresql://${POSTGRES_USER:-hirelens_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hirelens}_mlflow"
+      - "--default-artifact-root=${MLFLOW_ARTIFACT_ROOT:-/mlflow/artifacts}"
+      - "--serve-artifacts"
     environment:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
@@ -76,24 +74,24 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      test: ["CMD", "curl", "-sf", "http://0.0.0.0:5000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     logging: *default-logging
 
   # ── FastAPI Backend ─────────────────────────────────────────────────────────
   backend:
     build:
-      context: ..
+      context: .
       dockerfile: docker/Dockerfile.backend
       args:
         PYTHON_VERSION: "3.12.3"
     container_name: hirelens-backend
     restart: unless-stopped
     env_file:
-      - ../.env
+      - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hirelens_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hirelens}
       MLFLOW_TRACKING_URI: http://mlflow:5000
@@ -101,7 +99,7 @@ services:
     volumes:
       - upload_data:/app/uploads
       - model_cache:/app/models/cache
-      - ../logs:/app/logs
+      - ./logs:/app/logs
     ports:
       - "${API_PORT:-8000}:8000"
     networks:
@@ -129,8 +127,8 @@ services:
   # ── React Frontend ──────────────────────────────────────────────────────────
   frontend:
     build:
-      context: ../frontend
-      dockerfile: ../docker/Dockerfile.frontend
+      context: .
+      dockerfile: docker/Dockerfile.frontend
       args:
         VITE_API_URL: http://localhost:8000
     container_name: hirelens-frontend

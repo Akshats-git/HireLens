@@ -30,9 +30,11 @@ COPY requirements.txt .
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# Download spaCy models
-RUN python -m spacy download en_core_web_trf && \
-    python -m spacy download en_core_web_sm
+# Download spaCy models via direct URLs — `python -m spacy download` produces
+# broken 404 URLs for patch versions (e.g. 3.7.5) due to a stale compat table.
+RUN pip install --no-cache-dir \
+    "https://github.com/explosion/spacy-models/releases/download/en_core_web_trf-3.7.3/en_core_web_trf-3.7.3-py3-none-any.whl" \
+    "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl"
 
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
