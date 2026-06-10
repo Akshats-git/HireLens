@@ -1,27 +1,26 @@
 @import "tailwindcss";
 
-/* HireLens base — Tailwind v4 custom theme tokens */
+/* Enable dark: variant via .dark class on <html> */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
-  --color-brand-50:  #f0f4ff;
-  --color-brand-100: #e0eaff;
-  --color-brand-200: #c7d7fe;
-  --color-brand-300: #a5bcfc;
-  --color-brand-400: #8098f9;
-  --color-brand-500: #6172f3;
-  --color-brand-600: #444ce7;
-  --color-brand-700: #3538cd;
-  --color-brand-800: #2d31a6;
-  --color-brand-900: #2d3282;
-  --color-brand-950: #1f235b;
+  /* Electric blue brand palette */
+  --color-brand-50:  #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+  --color-brand-800: #1e40af;
+  --color-brand-900: #1e3a8a;
+  --color-brand-950: #172554;
 }
 
-/* Smooth scrolling & font rendering */
-*, *::before, *::after {
-  box-sizing: border-box;
-}
+*, *::before, *::after { box-sizing: border-box; }
 
 html {
   scroll-behavior: smooth;
@@ -32,4 +31,19 @@ html {
 body {
   margin: 0;
   font-family: var(--font-sans);
+}
+
+/* Thin scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+::selection { background: rgba(59,130,246,0.25); color: inherit; }
+
+input[type="range"] { accent-color: #3b82f6; cursor: pointer; }
+
+/* Print: hide form UI, show only results */
+@media print {
+  .no-print { display: none !important; }
 }
