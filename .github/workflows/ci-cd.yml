@@ -194,13 +194,15 @@ jobs:
 
       - name: Read image SHA
         id: sha
-        run: echo "value=$(cat image_sha.txt)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "value=$(cat image_sha.txt)" >> "$GITHUB_OUTPUT"
+          echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
           IMAGE_SHA: ${{ steps.sha.outputs.value }}
-          GHCR_USER: ${{ github.repository_owner }}
+          GHCR_USER: ${{ steps.sha.outputs.owner }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         with:
