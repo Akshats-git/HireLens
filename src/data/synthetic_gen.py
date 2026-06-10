@@ -1,23 +1,33 @@
 """
-Synthetic resume-JD pair generation for HireLens evaluation set.
+Evaluation dataset builder for HireLens.
 
-Uses the Anthropic API (claude-sonnet-4-6) to generate 500 diverse
-resume / job-description pairs with explicit match scores.
-These pairs are ONLY used as a held-out evaluation set — never for training.
+Uses the Kaggle structured resume dataset (sayyedfaizan95/resume-and-job-description)
+paired with real LinkedIn job descriptions to build a held-out evaluation set.
+
+Each row in the source dataset contains structured resume fields (skills, education,
+experience, job title). We:
+  1. Convert structured fields → formatted resume text
+  2. Pair each resume with a LinkedIn job description matched by skills/title
+  3. Compute a rule-based match score across 4 dimensions:
+       - Skill overlap        (40%)
+       - Experience fit       (30%)
+       - Education fit        (15%)
+       - Title/keyword match  (15%)
+  4. Also generate hard-negative pairs (same resume, wrong-domain job) at score ~0.0–0.3
 
 Output: data/synthetic/synthetic_pairs.csv
-Columns: resume_text, job_description, match_score, category, rationale
+Columns: resume_text, job_description, match_score, category, score_breakdown
 """
 
 import json
 import os
+import re
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
-import anthropic
 import mlflow
+import numpy as np
 import pandas as pd
 from loguru import logger
 from tqdm import tqdm
@@ -28,291 +38,395 @@ SYNTHETIC_DIR.mkdir(parents=True, exist_ok=True)
 
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
 MLFLOW_EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT_NAME", "hirelens-resume-matching")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-
-MODEL_ID = "claude-sonnet-4-6"
-TARGET_PAIRS = 500
-BATCH_SIZE = 10          # pairs per API call
-MAX_RETRIES = 3
-RETRY_DELAY_SECONDS = 5
 
 logger.remove()
 logger.add(sys.stderr, level="INFO",
            format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}")
 logger.add(PROJECT_ROOT / "logs" / "synthetic_gen.log", rotation="50 MB", retention="14 days", level="DEBUG")
 
+# ── Education degree hierarchy ────────────────────────────────────────────────
+_DEGREE_RANK = {
+    "high school": 1, "diploma": 2, "certificate": 3,
+    "associate": 3, "bachelor": 4, "bachelor's": 4,
+    "master": 5, "master's": 5, "mba": 5, "phd": 6, "doctorate": 6,
+}
 
-# ── Prompt construction ───────────────────────────────────────────────────────
-
-# Covers a broad range of domains so the synthetic eval set is diverse
-_DOMAIN_POOL = [
-    "Data Science", "Software Engineering", "DevOps", "Product Management",
-    "UX Design", "Marketing", "Finance", "Healthcare", "Legal", "Sales",
-    "Machine Learning Engineering", "Cybersecurity", "Cloud Architecture",
-    "Business Analysis", "HR", "Supply Chain", "Education", "Research",
-]
-
-_SCORE_BUCKETS = [
-    (0.85, 1.00, "strong match"),
-    (0.65, 0.84, "moderate match"),
-    (0.40, 0.64, "weak match"),
-    (0.00, 0.39, "poor match"),
-]
+_DEGREE_KEYWORDS = {
+    "phd": ["phd", "doctorate", "doctoral", "research"],
+    "master's": ["master", "mba", "ms ", "m.s", "graduate degree"],
+    "bachelor's": ["bachelor", "bs ", "b.s", "undergraduate", "degree"],
+    "diploma": ["diploma", "associate", "certificate"],
+}
 
 
-def _build_prompt(domain: str, score_range: tuple[float, float], score_label: str, n: int) -> str:
-    """Build the prompt for a batch of synthetic pairs."""
-    low, high = score_range
-    return f"""You are generating synthetic resume and job description pairs for an AI resume screening system evaluation dataset.
+# ── Resume text builder ───────────────────────────────────────────────────────
 
-Generate exactly {n} resume-job description pairs for the domain: **{domain}**
-Each pair must have a match score between {low:.2f} and {high:.2f} ({score_label}).
-
-Requirements:
-- Resumes: 200-400 words, realistic professional content with skills, experience, education sections
-- Job descriptions: 150-300 words, realistic with requirements, responsibilities, qualifications
-- Match score: float between {low:.2f} and {high:.2f} reflecting genuine resume-JD alignment
-- Rationale: 1-2 sentences explaining the score
-
-Respond with ONLY a valid JSON array, no markdown, no extra text:
-[
-  {{
-    "resume_text": "...",
-    "job_description": "...",
-    "match_score": 0.XX,
-    "category": "{domain}",
-    "rationale": "..."
-  }},
-  ...
-]"""
-
-
-# ── API calls ─────────────────────────────────────────────────────────────────
-
-def _call_api_with_retry(client: anthropic.Anthropic, prompt: str) -> list[dict[str, Any]]:
+def build_resume_text(row: pd.Series) -> str:
     """
-    Call the Claude API and parse the JSON response.
-
-    Retries up to MAX_RETRIES times on transient errors or malformed JSON.
+    Convert a structured resume row into a natural-language resume text.
 
     Args:
-        client: Initialised Anthropic client.
-        prompt: Full prompt string.
+        row: A row from the structured Kaggle dataset.
 
     Returns:
-        List of parsed pair dicts.
-
-    Raises:
-        RuntimeError: If all retries are exhausted.
+        Formatted resume string suitable for embedding.
     """
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            response = client.messages.create(
-                model=MODEL_ID,
-                max_tokens=4096,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = response.content[0].text.strip()
+    parts: list[str] = []
 
-            # Strip accidental markdown code fences
-            if raw.startswith("```"):
-                raw = re.sub(r"^```[a-z]*\n?", "", raw, flags=re.MULTILINE)
-                raw = raw.rstrip("`").strip()
+    # Header
+    name = str(row.get("Name", "Candidate")).strip()
+    parts.append(f"{name}\n")
 
-            pairs = json.loads(raw)
-            if not isinstance(pairs, list):
-                raise ValueError("Response is not a JSON array.")
-
-            # Validate and coerce each record
-            valid = []
-            for item in pairs:
-                score = float(item.get("match_score", 0.5))
-                score = max(0.0, min(1.0, score))
-                valid.append({
-                    "resume_text": str(item.get("resume_text", "")).strip(),
-                    "job_description": str(item.get("job_description", "")).strip(),
-                    "match_score": score,
-                    "category": str(item.get("category", "Unknown")).strip(),
-                    "rationale": str(item.get("rationale", "")).strip(),
-                })
-            return valid
-
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
-            logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: parse error — {e}")
-        except anthropic.RateLimitError:
-            logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: rate limit hit, sleeping 30s.")
-            time.sleep(30)
-        except anthropic.APIError as e:
-            logger.warning(f"Attempt {attempt}/{MAX_RETRIES}: API error — {e}")
-
-        if attempt < MAX_RETRIES:
-            time.sleep(RETRY_DELAY_SECONDS * attempt)
-
-    raise RuntimeError(f"All {MAX_RETRIES} attempts failed for this batch.")
-
-
-# ── Generation orchestration ──────────────────────────────────────────────────
-
-def generate_synthetic_pairs(n_pairs: int = TARGET_PAIRS) -> pd.DataFrame:
-    """
-    Generate n_pairs synthetic resume-JD pairs across diverse domains and score buckets.
-
-    Distributes pairs evenly across score buckets to ensure evaluation coverage
-    across the full match score spectrum.
-
-    Args:
-        n_pairs: Total number of pairs to generate.
-
-    Returns:
-        DataFrame with columns: [resume_text, job_description, match_score, category, rationale].
-    """
-    import re  # local import to avoid module-level dependency for type checkers
-
-    if not ANTHROPIC_API_KEY:
-        raise EnvironmentError(
-            "ANTHROPIC_API_KEY environment variable is not set. "
-            "Add it to your .env file."
+    # Summary / objective
+    current_title = str(row.get("Current_Job_Title", "")).strip()
+    exp_years = row.get("Experience_Years", 0)
+    if current_title and current_title.lower() != "none":
+        parts.append(
+            f"PROFESSIONAL SUMMARY\n"
+            f"Experienced {current_title} with {exp_years} year(s) of professional experience."
+        )
+    else:
+        parts.append(
+            f"PROFESSIONAL SUMMARY\n"
+            f"Recent graduate with {exp_years} year(s) of experience seeking new opportunities."
         )
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    logger.info(f"Generating {n_pairs} synthetic pairs using {MODEL_ID}...")
+    # Experience
+    prev_titles = str(row.get("Previous_Job_Titles", "")).strip()
+    parts.append("EXPERIENCE")
+    if current_title and current_title.lower() != "none":
+        parts.append(f"• {current_title}")
+    if prev_titles and prev_titles.lower() not in ("none", "nan", ""):
+        for title in prev_titles.split(","):
+            parts.append(f"• {title.strip()}")
 
-    all_pairs: list[dict[str, Any]] = []
+    # Education
+    edu_level = str(row.get("Education_Level", "")).strip()
+    field = str(row.get("Field_of_Study", "")).strip()
+    degree = str(row.get("Degrees", "")).strip()
+    institute = str(row.get("Institute_Name", "")).strip()
+    grad_year = row.get("Graduation_Year", "")
+    parts.append("EDUCATION")
+    edu_line = f"{degree}" if degree and degree.lower() != "nan" else edu_level
+    if field and field.lower() != "nan":
+        edu_line += f" in {field}"
+    if institute and institute.lower() != "nan":
+        edu_line += f" — {institute}"
+    if grad_year:
+        edu_line += f" ({int(grad_year)})"
+    parts.append(edu_line)
 
-    # Distribute evenly across 4 score buckets
-    pairs_per_bucket = n_pairs // len(_SCORE_BUCKETS)
-    remainder = n_pairs % len(_SCORE_BUCKETS)
+    # Skills
+    skills_raw = str(row.get("Skills", "")).strip()
+    if skills_raw and skills_raw.lower() != "nan":
+        parts.append(f"SKILLS\n{skills_raw}")
 
-    import itertools
-    domain_cycle = itertools.cycle(_DOMAIN_POOL)
+    # Certifications
+    certs = str(row.get("Certifications", "")).strip()
+    if certs and certs.lower() not in ("none", "nan", ""):
+        parts.append(f"CERTIFICATIONS\n{certs}")
 
-    with tqdm(total=n_pairs, desc="Generating synthetic pairs") as pbar:
-        for bucket_idx, (low, high, label) in enumerate(_SCORE_BUCKETS):
-            bucket_target = pairs_per_bucket + (1 if bucket_idx < remainder else 0)
-            generated = 0
+    return "\n".join(parts)
 
-            while generated < bucket_target:
-                batch_n = min(BATCH_SIZE, bucket_target - generated)
-                domain = next(domain_cycle)
-                prompt = _build_prompt(domain, (low, high), label, batch_n)
 
-                try:
-                    batch = _call_api_with_retry(client, prompt)
-                    all_pairs.extend(batch)
-                    generated += len(batch)
-                    pbar.update(len(batch))
-                    logger.debug(f"Bucket '{label}': {generated}/{bucket_target} done.")
-                except RuntimeError as e:
-                    logger.error(f"Batch failed, skipping: {e}")
-                    # Move on to next batch attempt rather than crashing the whole run
-                    generated += batch_n
-                    pbar.update(batch_n)
+# ── Scoring functions ─────────────────────────────────────────────────────────
 
-                # Polite rate-limit spacing
-                time.sleep(0.5)
+def _parse_skills(skills_str: str) -> set[str]:
+    """Parse comma-separated skills string into a lowercase set."""
+    if not skills_str or str(skills_str).lower() in ("nan", "none", ""):
+        return set()
+    return {s.strip().lower() for s in str(skills_str).split(",") if s.strip()}
 
-    df = pd.DataFrame(all_pairs)
-    logger.info(f"Generated {len(df)} synthetic pairs total.")
-    logger.info(f"Score distribution:\n{df['match_score'].describe()}")
+
+def score_skill_overlap(resume_skills: set[str], job_text: str) -> float:
+    """
+    Compute skill overlap score: fraction of resume skills found in job description.
+
+    Args:
+        resume_skills: Set of lowercased skill tokens from the resume.
+        job_text: Lowercased job description text.
+
+    Returns:
+        Float in [0, 1].
+    """
+    if not resume_skills:
+        return 0.3  # neutral when unknown
+    matches = sum(1 for skill in resume_skills if skill in job_text)
+    return min(1.0, matches / max(len(resume_skills), 1))
+
+
+def score_experience_fit(resume_years: float, job_text: str) -> float:
+    """
+    Score experience fit based on years mentioned in the job description.
+
+    Args:
+        resume_years: Years of experience from the resume row.
+        job_text: Lowercased job description text.
+
+    Returns:
+        Float in [0, 1].
+    """
+    # Extract required years from JD (e.g. "3+ years", "5 years of experience")
+    matches = re.findall(r"(\d+)\+?\s*(?:to\s*\d+\s*)?years?", job_text)
+    if not matches:
+        return 0.6  # neutral when not specified
+
+    required = float(matches[0])
+    gap = resume_years - required
+
+    if gap >= 0:
+        return 1.0 if gap <= 3 else 0.8   # overqualified slightly penalised
+    else:
+        return max(0.0, 1.0 + gap * 0.2)  # underqualified: -0.2 per missing year
+
+
+def score_education_fit(edu_level: str, job_text: str) -> float:
+    """
+    Score education fit by matching degree level to job description requirements.
+
+    Args:
+        edu_level: Education level string from the resume.
+        job_text: Lowercased job description text.
+
+    Returns:
+        Float in [0, 1].
+    """
+    resume_rank = _DEGREE_RANK.get(edu_level.lower(), 3)
+
+    # Determine what the JD requires
+    required_rank = 3  # default: bachelor level
+    for degree, keywords in _DEGREE_KEYWORDS.items():
+        if any(kw in job_text for kw in keywords):
+            required_rank = _DEGREE_RANK.get(degree, 3)
+            break
+
+    gap = resume_rank - required_rank
+    if gap >= 0:
+        return 1.0
+    elif gap == -1:
+        return 0.6
+    else:
+        return 0.3
+
+
+def score_title_keyword_match(resume_row: pd.Series, job_text: str) -> float:
+    """
+    Score title/keyword alignment between resume job title and JD text.
+
+    Args:
+        resume_row: Resume row with Current_Job_Title and Field_of_Study.
+        job_text: Lowercased job description text.
+
+    Returns:
+        Float in [0, 1].
+    """
+    title = str(resume_row.get("Current_Job_Title", "")).lower()
+    field = str(resume_row.get("Field_of_Study", "")).lower()
+
+    score = 0.2  # baseline
+    if title and title != "none" and title in job_text:
+        score += 0.5
+    if field and field != "nan":
+        # Check word-level overlap
+        field_words = {w for w in field.split() if len(w) > 3}
+        matches = sum(1 for w in field_words if w in job_text)
+        score += min(0.3, matches * 0.15)
+
+    return min(1.0, score)
+
+
+def compute_match_score(
+    resume_row: pd.Series,
+    job_text: str,
+) -> tuple[float, dict[str, float]]:
+    """
+    Compute the composite match score for a resume-JD pair.
+
+    Weights (from configs/config.yaml):
+        skills_match:          0.40
+        experience_relevance:  0.30
+        education_fit:         0.15
+        keyword_alignment:     0.15
+
+    Args:
+        resume_row: Row from the structured resume dataset.
+        job_text: Job description text (will be lowercased internally).
+
+    Returns:
+        Tuple of (composite_score, breakdown_dict).
+    """
+    job_lower = job_text.lower()
+    resume_skills = _parse_skills(str(resume_row.get("Skills", "")))
+    exp_years = float(resume_row.get("Experience_Years", 0) or 0)
+    edu_level = str(resume_row.get("Education_Level", "Bachelor's"))
+
+    s_skills = score_skill_overlap(resume_skills, job_lower)
+    s_exp = score_experience_fit(exp_years, job_lower)
+    s_edu = score_education_fit(edu_level, job_lower)
+    s_kw = score_title_keyword_match(resume_row, job_lower)
+
+    composite = (
+        0.40 * s_skills +
+        0.30 * s_exp +
+        0.15 * s_edu +
+        0.15 * s_kw
+    )
+    composite = round(min(1.0, max(0.0, composite)), 4)
+
+    breakdown = {
+        "skills_match": round(s_skills, 4),
+        "experience_relevance": round(s_exp, 4),
+        "education_fit": round(s_edu, 4),
+        "keyword_alignment": round(s_kw, 4),
+    }
+    return composite, breakdown
+
+
+# ── Main builder ──────────────────────────────────────────────────────────────
+
+def build_eval_dataset(
+    eval_source_path: Path,
+    jobs_path: Path,
+    neg_ratio: int = 1,
+    random_seed: int = 42,
+    jobs_sample_size: int = 5000,
+) -> pd.DataFrame:
+    """
+    Build the held-out evaluation dataset from the structured Kaggle resume data
+    paired with real LinkedIn job descriptions.
+
+    Samples a fixed pool of jobs upfront (jobs_sample_size) to avoid
+    per-resume full-scan over 123K rows.
+    """
+    rng = np.random.default_rng(random_seed)
+
+    logger.info(f"Loading structured resumes from {eval_source_path}")
+    source_df = pd.read_csv(eval_source_path)
+    logger.info(f"Loaded {len(source_df)} structured resumes")
+
+    logger.info(f"Loading job descriptions from {jobs_path}")
+    jobs_df = pd.read_csv(jobs_path, usecols=["description"]).dropna()
+    jobs_df = jobs_df[jobs_df["description"].str.len() > 100].reset_index(drop=True)
+
+    # Sample a manageable pool upfront — avoids O(n*m) regex scans
+    if len(jobs_df) > jobs_sample_size:
+        jobs_df = jobs_df.sample(n=jobs_sample_size, random_state=random_seed).reset_index(drop=True)
+    logger.info(f"Using {len(jobs_df)} job descriptions (sampled pool)")
+
+    records: list[dict[str, Any]] = []
+
+    for _, row in tqdm(source_df.iterrows(), total=len(source_df), desc="Building eval pairs"):
+        resume_text = build_resume_text(row)
+        category = str(row.get("Current_Job_Title", "Unknown")).strip()
+
+        # ── Positive pair: random sample, scored by rule-based scorer ─────────
+        pos_idx = int(rng.integers(len(jobs_df)))
+        jd = str(jobs_df.iloc[pos_idx]["description"])
+        score, breakdown = compute_match_score(row, jd)
+        records.append({
+            "resume_text": resume_text,
+            "job_description": jd,
+            "match_score": score,
+            "category": category,
+            "pair_type": "scored",
+            "score_breakdown": json.dumps(breakdown),
+        })
+
+        # ── Additional pairs for neg_ratio > 1 ───────────────────────────────
+        for _ in range(neg_ratio):
+            neg_idx = int(rng.integers(len(jobs_df)))
+            jd = str(jobs_df.iloc[neg_idx]["description"])
+            score, breakdown = compute_match_score(row, jd)
+            records.append({
+                "resume_text": resume_text,
+                "job_description": jd,
+                "match_score": score,
+                "category": category,
+                "pair_type": "scored",
+                "score_breakdown": json.dumps(breakdown),
+            })
+
+    df = pd.DataFrame(records)
+    logger.info(f"Built {len(df)} eval pairs")
+    logger.info(f"Score distribution:\n{df['match_score'].describe().round(3).to_string()}")
     return df
-
-
-# ── Checkpoint helpers ────────────────────────────────────────────────────────
-
-def _checkpoint_path() -> Path:
-    return SYNTHETIC_DIR / "synthetic_pairs_checkpoint.json"
-
-
-def load_checkpoint() -> list[dict]:
-    """Load any previously generated pairs from a checkpoint file."""
-    path = _checkpoint_path()
-    if path.exists():
-        logger.info(f"Resuming from checkpoint: {path}")
-        return json.loads(path.read_text())
-    return []
-
-
-def save_checkpoint(pairs: list[dict]) -> None:
-    """Save generated pairs to checkpoint so progress isn't lost on interruption."""
-    _checkpoint_path().write_text(json.dumps(pairs, indent=2))
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def run_synthetic_generation(n_pairs: int = TARGET_PAIRS) -> pd.DataFrame:
+def run_synthetic_generation(n_pairs: int = 500) -> pd.DataFrame:
     """
-    Full synthetic generation pipeline with checkpointing, validation, and MLflow logging.
+    Build the evaluation dataset from the Kaggle structured resume dataset.
+
+    Uses rule-based scoring across 4 dimensions (skills, experience, education,
+    keywords) instead of LLM generation — free, fast, and interpretable.
 
     Args:
-        n_pairs: Target number of synthetic pairs.
+        n_pairs: Approximate target pairs (dataset has 1200 resumes × neg_ratio+1).
 
     Returns:
-        Saved synthetic pairs DataFrame.
+        Saved evaluation pairs DataFrame.
     """
     logger.info("=" * 60)
-    logger.info("Starting synthetic data generation")
+    logger.info("Building evaluation dataset from Kaggle structured resumes")
     logger.info("=" * 60)
 
-    # Resume from checkpoint if interrupted
-    existing = load_checkpoint()
-    if len(existing) >= n_pairs:
-        logger.info(f"Checkpoint has {len(existing)} pairs — skipping generation.")
-        df = pd.DataFrame(existing)
-    else:
-        remaining = n_pairs - len(existing)
-        logger.info(f"Checkpoint has {len(existing)} pairs, generating {remaining} more.")
-        new_pairs_df = generate_synthetic_pairs(remaining)
-        all_pairs = existing + new_pairs_df.to_dict("records")
-        save_checkpoint(all_pairs)
-        df = pd.DataFrame(all_pairs)
+    eval_source = PROJECT_ROOT / "data" / "raw" / "eval_dataset" / "resume_dataset_1200.csv"
+    jobs_path = PROJECT_ROOT / "data" / "raw" / "jobs_clean.csv"
 
-    # Basic quality filter
+    if not eval_source.exists():
+        raise FileNotFoundError(
+            f"Eval source not found at {eval_source}. "
+            "Download it with: kaggle datasets download sayyedfaizan95/resume-and-job-description "
+            "--path data/raw/eval_dataset --unzip"
+        )
+    if not jobs_path.exists():
+        raise FileNotFoundError(
+            f"Jobs CSV not found at {jobs_path}. Run ingestion first."
+        )
+
+    df = build_eval_dataset(
+        eval_source_path=eval_source,
+        jobs_path=jobs_path,
+        neg_ratio=1,
+    )
+
+    # Quality filter
     before = len(df)
     df = df[
-        (df["resume_text"].str.len() > 100) &
+        (df["resume_text"].str.len() > 50) &
         (df["job_description"].str.len() > 80) &
         (df["match_score"].between(0.0, 1.0))
-    ].drop_duplicates(subset=["resume_text"]).reset_index(drop=True)
+    ].reset_index(drop=True)
     logger.info(f"Quality filter: {before} → {len(df)} pairs")
 
-    # Save final output
     output_path = SYNTHETIC_DIR / "synthetic_pairs.csv"
     df.to_csv(output_path, index=False)
-    logger.info(f"Saved {len(df)} synthetic pairs to {output_path}")
+    logger.success(f"Saved {len(df)} eval pairs to {output_path}")
 
     # Log to MLflow
     try:
         mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
         mlflow.set_experiment(MLFLOW_EXPERIMENT)
-        with mlflow.start_run(run_name="synthetic-data-generation"):
+        with mlflow.start_run(run_name="eval-dataset-generation"):
             mlflow.log_metrics({
-                "synthetic_pairs_total": float(len(df)),
-                "synthetic_score_mean": float(df["match_score"].mean()),
-                "synthetic_score_std": float(df["match_score"].std()),
-                "synthetic_score_min": float(df["match_score"].min()),
-                "synthetic_score_max": float(df["match_score"].max()),
-                "synthetic_unique_categories": float(df["category"].nunique()),
+                "eval_pairs_total": float(len(df)),
+                "eval_positive_pairs": float((df["pair_type"] == "positive").sum()),
+                "eval_negative_pairs": float((df["pair_type"] == "negative").sum()),
+                "eval_score_mean": float(df["match_score"].mean()),
+                "eval_score_std": float(df["match_score"].std()),
+                "eval_unique_categories": float(df["category"].nunique()),
             })
-            mlflow.log_artifact(str(output_path), artifact_path="synthetic")
-            mlflow.set_tag("stage", "synthetic_generation")
-            mlflow.set_tag("model_used", MODEL_ID)
-            logger.success("Synthetic generation stats logged to MLflow.")
+            mlflow.log_artifact(str(output_path), artifact_path="eval")
+            mlflow.set_tag("stage", "eval_dataset_generation")
+            mlflow.set_tag("source", "kaggle:sayyedfaizan95/resume-and-job-description")
+            logger.success("Eval dataset stats logged to MLflow.")
     except Exception as e:
         logger.warning(f"MLflow logging failed (non-fatal): {e}")
 
-    # Remove checkpoint on successful completion
-    cp = _checkpoint_path()
-    if cp.exists():
-        cp.unlink()
-
-    logger.success(f"Synthetic generation complete: {len(df)} pairs saved.")
+    logger.success(f"Evaluation dataset complete: {len(df)} pairs.")
     return df
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Generate synthetic resume-JD pairs.")
-    parser.add_argument("--n-pairs", type=int, default=TARGET_PAIRS,
-                        help=f"Number of pairs to generate (default: {TARGET_PAIRS})")
-    args = parser.parse_args()
-    run_synthetic_generation(n_pairs=args.n_pairs)
+    run_synthetic_generation()

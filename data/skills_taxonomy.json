@@ -1,0 +1,167 @@
+{
+  "technical": {
+    "programming_languages": [
+      "python", "javascript", "typescript", "java", "c++", "c#", "c", "go", "golang",
+      "rust", "ruby", "php", "swift", "kotlin", "scala", "r", "matlab", "julia",
+      "perl", "haskell", "elixir", "clojure", "groovy", "dart", "lua", "fortran",
+      "cobol", "assembly", "vhdl", "verilog", "bash", "shell scripting", "powershell",
+      "objective-c", "f#", "ocaml", "erlang", "prolog", "solidity"
+    ],
+    "ml_ai": [
+      "machine learning", "deep learning", "neural networks", "natural language processing",
+      "nlp", "computer vision", "reinforcement learning", "transfer learning",
+      "generative ai", "large language models", "llm", "transformers", "bert", "gpt",
+      "tensorflow", "pytorch", "keras", "scikit-learn", "sklearn", "xgboost", "lightgbm",
+      "catboost", "hugging face", "openai api", "langchain", "llamaindex", "rag",
+      "stable diffusion", "diffusion models", "gans", "autoencoders", "lstm", "rnn",
+      "cnn", "attention mechanism", "self-supervised learning", "few-shot learning",
+      "zero-shot learning", "prompt engineering", "fine-tuning", "onnx", "mlflow",
+      "kubeflow", "ray", "dask", "numba", "opencv", "pillow", "albumentations",
+      "sentence-transformers", "fastai", "caffe", "mxnet", "paddle", "jax", "flax",
+      "spacy", "nltk", "gensim", "word2vec", "glove", "fasttext", "topic modeling",
+      "sentiment analysis", "named entity recognition", "ner", "text classification",
+      "object detection", "image segmentation", "pose estimation", "time series forecasting",
+      "anomaly detection", "recommendation systems", "collaborative filtering",
+      "matrix factorization", "gradient boosting", "random forest", "svm", "logistic regression",
+      "linear regression", "clustering", "k-means", "dbscan", "dimensionality reduction",
+      "pca", "t-sne", "umap", "feature engineering", "feature selection", "hyperparameter tuning",
+      "bayesian optimization", "automl", "mlops", "model deployment", "a/b testing",
+      "statistical modeling", "hypothesis testing", "experimentation"
+    ],
+    "web_development": [
+      "react", "react.js", "angular", "vue", "vue.js", "next.js", "nuxt.js", "svelte",
+      "node.js", "express", "express.js", "django", "flask", "fastapi", "spring boot",
+      "spring", "rails", "ruby on rails", "laravel", "asp.net", ".net", "graphql",
+      "rest api", "restful", "websocket", "html", "html5", "css", "css3", "sass",
+      "less", "tailwind css", "bootstrap", "material ui", "chakra ui", "webpack",
+      "vite", "babel", "eslint", "redux", "zustand", "mobx", "rxjs", "jquery",
+      "d3.js", "three.js", "web components", "pwa", "service workers", "oauth",
+      "jwt", "authentication", "authorization", "microservices", "api gateway",
+      "grpc", "soap", "xml", "json", "yaml", "openapi", "swagger", "storybook",
+      "jest", "cypress", "playwright", "selenium", "testing library"
+    ],
+    "data_engineering": [
+      "apache spark", "spark", "hadoop", "hive", "kafka", "apache kafka", "flink",
+      "airflow", "apache airflow", "dbt", "prefect", "dagster", "luigi", "nifi",
+      "etl", "elt", "data pipeline", "data warehouse", "data lake", "data lakehouse",
+      "snowflake", "databricks", "redshift", "bigquery", "azure synapse", "dask",
+      "pandas", "polars", "numpy", "scipy", "data modeling", "dimensional modeling",
+      "star schema", "data quality", "data governance", "data catalog", "data lineage",
+      "great expectations", "dlt", "iceberg", "delta lake", "parquet", "avro",
+      "protobuf", "arrow", "streaming", "batch processing", "real-time processing",
+      "cdc", "change data capture", "elasticsearch", "opensearch", "solr", "lucene",
+      "tableau", "power bi", "looker", "metabase", "superset", "grafana", "kibana"
+    ],
+    "cloud_devops": [
+      "aws", "amazon web services", "gcp", "google cloud", "azure", "microsoft azure",
+      "docker", "kubernetes", "k8s", "helm", "terraform", "ansible", "puppet", "chef",
+      "ci/cd", "github actions", "gitlab ci", "jenkins", "circleci", "travis ci",
+      "argocd", "flux", "istio", "service mesh", "prometheus", "grafana", "datadog",
+      "new relic", "splunk", "elk stack", "cloudwatch", "cloud formation", "pulumi",
+      "serverless", "lambda", "cloud functions", "cloud run", "fargate", "ecs", "eks",
+      "gke", "aks", "openshift", "vagrant", "packer", "vault", "consul", "nomad",
+      "nginx", "apache httpd", "haproxy", "load balancing", "auto scaling",
+      "infrastructure as code", "iac", "sre", "site reliability engineering",
+      "monitoring", "observability", "tracing", "logging", "alerting",
+      "linux", "unix", "windows server", "networking", "tcp/ip", "dns", "ssl/tls",
+      "firewall", "vpc", "cdn", "cloudfront", "s3", "ec2", "rds", "dynamodb"
+    ],
+    "databases": [
+      "postgresql", "postgres", "mysql", "sqlite", "oracle", "sql server",
+      "mssql", "mariadb", "mongodb", "dynamodb", "cassandra", "couchdb",
+      "redis", "memcached", "neo4j", "graph database", "influxdb", "timescaledb",
+      "clickhouse", "pinecone", "weaviate", "chroma", "faiss", "vector database",
+      "sql", "nosql", "database design", "schema design", "query optimization",
+      "indexing", "transactions", "acid", "replication", "sharding", "partitioning",
+      "stored procedures", "triggers", "orm", "sqlalchemy", "prisma", "sequelize",
+      "hibernate", "jpa", "entity framework", "mongoose", "room database"
+    ],
+    "security": [
+      "cybersecurity", "penetration testing", "ethical hacking", "vulnerability assessment",
+      "soc", "siem", "ids/ips", "firewall management", "zero trust", "identity management",
+      "iam", "oauth2", "openid connect", "saml", "encryption", "cryptography",
+      "ssl/tls", "pki", "threat modeling", "owasp", "security audit", "compliance",
+      "gdpr", "hipaa", "sox", "iso 27001", "nist", "devsecops", "secret scanning",
+      "code security", "snyk", "sonarqube", "burp suite", "metasploit", "wireshark",
+      "nmap", "kali linux", "incident response", "digital forensics", "malware analysis"
+    ],
+    "mobile": [
+      "ios development", "android development", "react native", "flutter", "xamarin",
+      "ionic", "cordova", "swift", "objective-c", "kotlin", "java android",
+      "xcode", "android studio", "expo", "firebase", "push notifications",
+      "mobile ui/ux", "app store optimization", "in-app purchases", "biometrics"
+    ],
+    "tools_other": [
+      "git", "github", "gitlab", "bitbucket", "jira", "confluence", "notion",
+      "figma", "sketch", "adobe xd", "invision", "zeplin", "postman", "insomnia",
+      "vs code", "intellij", "pycharm", "vim", "emacs", "jupyter", "colab",
+      "linux", "macos", "windows", "virtual machines", "wsl",
+      "regex", "bash scripting", "makefile", "cmake", "gradle", "maven", "npm",
+      "yarn", "pip", "poetry", "conda", "virtualenv", "docker compose",
+      "ffmpeg", "imagemagick", "latex", "markdown"
+    ]
+  },
+  "soft": [
+    "leadership", "team leadership", "people management", "mentoring", "coaching",
+    "communication", "written communication", "verbal communication", "presentation",
+    "public speaking", "technical writing", "documentation",
+    "problem solving", "critical thinking", "analytical thinking", "systems thinking",
+    "decision making", "strategic planning", "roadmap planning",
+    "project management", "agile", "scrum", "kanban", "waterfall", "product management",
+    "stakeholder management", "cross-functional collaboration", "conflict resolution",
+    "negotiation", "influencing", "change management",
+    "time management", "prioritization", "multitasking", "attention to detail",
+    "creativity", "innovation", "design thinking", "growth mindset",
+    "adaptability", "resilience", "fast learner", "self-motivated",
+    "empathy", "emotional intelligence", "customer focus", "user empathy",
+    "research", "data-driven", "metrics-driven", "continuous improvement"
+  ],
+  "domain": {
+    "finance": [
+      "financial modeling", "valuation", "dcf", "financial analysis", "accounting",
+      "bookkeeping", "gaap", "ifrs", "budgeting", "forecasting", "fp&a",
+      "investment banking", "equity research", "portfolio management", "risk management",
+      "derivatives", "options trading", "algorithmic trading", "quantitative finance",
+      "compliance", "audit", "tax", "payroll", "erp", "sap", "quickbooks"
+    ],
+    "healthcare": [
+      "clinical research", "clinical trials", "ehr", "emr", "epic", "cerner",
+      "hipaa", "fda regulations", "medical coding", "icd-10", "cpt codes",
+      "patient care", "nursing", "pharmacy", "medical imaging", "radiology",
+      "bioinformatics", "genomics", "pharmaceutical", "drug discovery",
+      "healthcare analytics", "population health", "telehealth"
+    ],
+    "marketing": [
+      "digital marketing", "seo", "sem", "ppc", "google ads", "facebook ads",
+      "social media marketing", "content marketing", "email marketing", "crm",
+      "salesforce", "hubspot", "marketing automation", "campaign management",
+      "brand management", "market research", "customer segmentation",
+      "conversion rate optimization", "cro", "a/b testing", "growth hacking",
+      "affiliate marketing", "influencer marketing", "copywriting", "ux writing"
+    ],
+    "design": [
+      "ui design", "ux design", "product design", "graphic design", "visual design",
+      "interaction design", "information architecture", "wireframing", "prototyping",
+      "user research", "usability testing", "accessibility", "wcag",
+      "figma", "sketch", "adobe photoshop", "illustrator", "after effects",
+      "motion design", "brand design", "typography", "color theory", "design systems"
+    ],
+    "sales": [
+      "b2b sales", "b2c sales", "enterprise sales", "saas sales", "crm",
+      "salesforce", "account management", "business development", "lead generation",
+      "cold calling", "outbound sales", "inbound sales", "sales forecasting",
+      "quota management", "contract negotiation", "channel sales", "partner management",
+      "customer success", "customer retention", "upselling", "cross-selling"
+    ]
+  },
+  "certifications": [
+    "aws certified", "gcp certified", "azure certified", "cka", "ckad",
+    "pmp", "prince2", "safe", "csm", "psm", "itil",
+    "cissp", "cism", "ceh", "oscp", "comptia security+",
+    "google analytics", "hubspot certified", "salesforce certified",
+    "tensorflow developer", "pytorch certified", "databricks certified",
+    "dbt certified", "snowflake certified", "tableau certified", "power bi certified",
+    "cpa", "cfa", "frm", "cma", "acca",
+    "six sigma", "lean", "togaf", "cobit"
+  ]
+}

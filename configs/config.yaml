@@ -43,7 +43,7 @@ model:
     save_strategy: epoch
     evaluation_strategy: epoch
     load_best_model_at_end: true
-    metric_for_best_model: eval_ndcg
+    metric_for_best_model: eval_val_spearman_cosine
     fp16: true                             # Enable for GTX 1650
     dataloader_num_workers: 4
 
@@ -150,8 +150,9 @@ mlflow:
 # ── Evaluation ────────────────────────────────────────────────────────────────
 evaluation:
   target_metrics:
-    precision_at_5: 0.85
+    precision_at_1: 0.85    # P@1 is meaningful with small candidate sets (1 pos + 2 neg)
     ndcg_at_10: 0.80
+    auc_roc: 0.80
     ner_f1: 0.88
 
   k_values: [1, 3, 5, 10]
