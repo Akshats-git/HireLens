@@ -1,18 +1,35 @@
+# =============================================================================
+# HireLens — DVC Pipeline
+# Run the full pipeline:   dvc repro
+# Run a single stage:      dvc repro <stage>
+# Show DAG:                dvc dag
+# Check metrics:           dvc metrics show
+# Compare runs:            dvc metrics diff
+# =============================================================================
+
 stages:
 
+  # ── 1. Data Ingestion ────────────────────────────────────────────────────────
   ingest:
     cmd: python -m src.data.data_pipeline --stage ingest
     deps:
       - src/data/ingestion.py
       - src/data/data_pipeline.py
       - configs/config.yaml
+    params:
+      - params.yaml:
+          - data.random_seed
+          - data.min_resume_chars
+          - data.max_resume_chars
     outs:
       - data/raw/resumes_clean.csv
       - data/raw/jobs_clean.csv
     metrics:
       - logs/dataset_distributions.json:
           cache: false
+    desc: "Download and clean raw resume + job-posting data from Kaggle"
 
+  # ── 2. Preprocessing ─────────────────────────────────────────────────────────
   preprocess:
     cmd: python -m src.data.data_pipeline --stage preprocess
     deps:
@@ -21,18 +38,85 @@ stages:
       - data/raw/resumes_clean.csv
       - data/raw/jobs_clean.csv
       - configs/config.yaml
+    params:
+      - params.yaml:
+          - data.train_val_test_split
+          - data.random_seed
+          - data.remove_pii
+          - data.normalize_whitespace
     outs:
       - data/processed/resumes_processed.csv
       - data/processed/jobs_processed.csv
       - data/processed/train_pairs.csv
       - data/processed/val_pairs.csv
       - data/processed/test_pairs.csv
+    desc: "Build train/val/test pairs with weak-supervision labels"
 
+  # ── 3. Synthetic Augmentation ────────────────────────────────────────────────
   synthetic:
-    cmd: python -m src.data.data_pipeline --stage synthetic --n-pairs 500
+    cmd: >-
+      python -m src.data.data_pipeline --stage synthetic
+      --n-pairs ${synthetic.num_samples}
     deps:
       - src/data/synthetic_gen.py
       - src/data/data_pipeline.py
+      - data/processed/train_pairs.csv
+      - data/skills_taxonomy.json
       - configs/config.yaml
+    params:
+      - params.yaml:
+          - synthetic.num_samples
+          - synthetic.noise_level
+          - synthetic.random_seed
     outs:
       - data/synthetic/synthetic_pairs.csv
+    desc: "Augment training data with skill-permutation synthetic pairs"
+
+  # ── 4. Model Training ────────────────────────────────────────────────────────
+  train:
+    cmd: >-
+      python -m src.models.train
+      --epochs ${fine_tuning.num_train_epochs}
+      --batch-size ${fine_tuning.per_device_train_batch_size}
+      --run-name dvc-auto
+    deps:
+      - src/models/train.py
+      - src/features/embeddings.py
+      - data/processed/train_pairs.csv
+      - data/processed/val_pairs.csv
+      - data/synthetic/synthetic_pairs.csv
+      - configs/config.yaml
+    params:
+      - params.yaml:
+          - fine_tuning
+          - model.base_name
+          - model.max_seq_length
+    outs:
+      - models/fine_tuned/hirelens_matcher:
+          cache: true
+          persist: true
+    metrics:
+      - logs/training_metrics.json:
+          cache: false
+    desc: "Fine-tune all-MiniLM-L6-v2 with CosineSimilarityLoss on GTX 1650"
+
+  # ── 5. Evaluation ────────────────────────────────────────────────────────────
+  evaluate:
+    cmd: python -m src.evaluation.metrics
+    deps:
+      - src/evaluation/metrics.py
+      - src/models/scorer.py
+      - src/features/ner.py
+      - models/fine_tuned/hirelens_matcher
+      - data/processed/test_pairs.csv
+      - configs/config.yaml
+    params:
+      - params.yaml:
+          - evaluation.k_values
+          - evaluation.num_eval_samples
+          - evaluation.target_metrics
+          - scoring.weights
+    metrics:
+      - logs/evaluation_report.json:
+          cache: false
+    desc: "Compute P@K, NDCG@K, AUC-ROC, MRR, and NER F1 on held-out test set"

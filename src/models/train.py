@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -248,6 +249,25 @@ def train(
             mlflow.log_metrics({k: float(v) for k, v in eval_results.items()})
         else:
             mlflow.log_metric("val_cosine_pearson", float(eval_results))
+
+        # Write DVC-tracked training metrics file
+        metrics_out: dict = {}
+        if isinstance(eval_results, dict):
+            metrics_out = {k: float(v) for k, v in eval_results.items()}
+        else:
+            metrics_out = {"val_cosine_pearson": float(eval_results)}
+        metrics_out.update({
+            "epochs": n_epochs,
+            "train_batch_size": train_bs,
+            "learning_rate": ft["learning_rate"],
+            "train_samples": len(train_df),
+            "val_samples": len(val_df),
+        })
+        metrics_path = PROJECT_ROOT / "logs" / "training_metrics.json"
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(metrics_path, "w") as f:
+            json.dump(metrics_out, f, indent=2)
+        logger.info(f"Training metrics written to {metrics_path}")
 
         # ── Save model ────────────────────────────────────────────────────────
         model.save(str(output_dir))

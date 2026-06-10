@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -45,6 +46,22 @@ def stage_ingest() -> tuple:
     t0 = time.perf_counter()
     resume_df, jobs_df = run_ingestion()
     elapsed = time.perf_counter() - t0
+
+    # Write DVC-tracked metric file
+    dist = {
+        "resume_total_rows": int(len(resume_df)),
+        "resume_unique_categories": int(resume_df["category"].nunique()) if "category" in resume_df.columns else 0,
+        "resume_avg_text_length": float(resume_df["resume_text"].str.len().mean()) if "resume_text" in resume_df.columns else 0.0,
+        "jobs_total_rows": int(len(jobs_df)),
+        "jobs_avg_description_length": float(jobs_df["description"].str.len().mean()) if "description" in jobs_df.columns else 0.0,
+        "ingestion_elapsed_s": round(elapsed, 2),
+    }
+    dist_path = PROJECT_ROOT / "logs" / "dataset_distributions.json"
+    dist_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(dist_path, "w") as f:
+        json.dump(dist, f, indent=2)
+    logger.info(f"Written: {dist_path}")
+
     logger.success(f"Ingestion complete in {elapsed:.1f}s — "
                    f"{len(resume_df)} resumes, {len(jobs_df)} jobs.")
     return resume_df, jobs_df

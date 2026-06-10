@@ -1,0 +1,252 @@
+name: CI / CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_BACKEND_REPO: hirelens-backend
+  ECR_FRONTEND_REPO: hirelens-frontend
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+
+# Cancel in-progress runs for the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ============================================================================
+  # Job 1 — Python lint + unit tests (runs on every push and PR)
+  # ============================================================================
+  test-backend:
+    name: Backend — lint & tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          # Install a lighter subset — skip heavy ML libs for CI speed
+          pip install \
+            fastapi==0.111.1 uvicorn==0.30.3 \
+            pydantic==2.8.2 pydantic-settings==2.3.4 \
+            python-multipart==0.0.9 httpx==0.27.0 aiofiles==23.2.1 \
+            redis>=5.0.0 pdfplumber==0.11.2 PyMuPDF==1.24.7 \
+            pytest==8.2.2 pytest-asyncio==0.23.7 pytest-cov==5.0.0 \
+            black==24.4.2 flake8==7.1.0 \
+            loguru==0.7.2 PyYAML==6.0.2 \
+            sentence-transformers==3.0.1 scikit-learn==1.5.1 \
+            numpy==1.26.4 pandas==2.2.2
+
+      - name: Black formatting check
+        run: black --check --diff backend/ src/ tests/ mlflow/ monitor.py
+
+      - name: Flake8 lint
+        run: |
+          flake8 backend/ src/ tests/ mlflow/ monitor.py \
+            --max-line-length=120 \
+            --extend-ignore=E203,W503,E501 \
+            --exclude=.venv,__pycache__,migrations
+
+      - name: Run tests
+        env:
+          PYTHONPATH: .
+        run: |
+          pytest tests/ -v --cov=backend --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --tb=short -q
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: coverage.xml
+          fail_ci_if_error: false
+
+  # ============================================================================
+  # Job 2 — Frontend build & type check (runs on every push and PR)
+  # ============================================================================
+  test-frontend:
+    name: Frontend — build check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --prefer-offline
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint --if-present
+
+      - name: Production build
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: http://localhost:8000
+        run: npm run build
+
+  # ============================================================================
+  # Job 3 — Build & push Docker images to ECR  (main branch only)
+  # ============================================================================
+  build-push:
+    name: Build & push Docker images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [test-backend, test-frontend]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    permissions:
+      id-token: write  # OIDC for AWS
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tags
+        id: meta
+        run: |
+          SHA=${GITHUB_SHA::7}
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "registry=${{ steps.ecr-login.outputs.registry }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.backend
+          push: true
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+          tags: |
+            ${{ steps.meta.outputs.registry }}/${{ env.ECR_BACKEND_REPO }}:${{ steps.meta.outputs.sha }}
+            ${{ steps.meta.outputs.registry }}/${{ env.ECR_BACKEND_REPO }}:latest
+          build-args: |
+            PYTHON_VERSION=3.12.3
+
+      - name: Build & push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          push: true
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+          tags: |
+            ${{ steps.meta.outputs.registry }}/${{ env.ECR_FRONTEND_REPO }}:${{ steps.meta.outputs.sha }}
+            ${{ steps.meta.outputs.registry }}/${{ env.ECR_FRONTEND_REPO }}:latest
+          build-args: |
+            VITE_API_URL=https://api.hirelens.io
+
+      - name: Save image SHA for deploy job
+        run: echo "${{ steps.meta.outputs.sha }}" > image_sha.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-sha
+          path: image_sha.txt
+
+  # ============================================================================
+  # Job 4 — Deploy to EC2 via SSH  (main branch only)
+  # ============================================================================
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-sha
+
+      - name: Read image SHA
+        id: sha
+        run: echo "value=$(cat image_sha.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          IMAGE_SHA: ${{ steps.sha.outputs.value }}
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: IMAGE_SHA,ECR_REGISTRY,AWS_REGION,POSTGRES_PASSWORD,ECR_BACKEND_REPO,ECR_FRONTEND_REPO
+          script: |
+            set -euo pipefail
+
+            cd /opt/hirelens
+
+            # Pull latest images
+            aws ecr get-login-password --region "$AWS_REGION" \
+              | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+            docker pull "$ECR_REGISTRY/$ECR_BACKEND_REPO:$IMAGE_SHA"
+            docker pull "$ECR_REGISTRY/$ECR_FRONTEND_REPO:$IMAGE_SHA"
+
+            # Update .env image tags
+            sed -i "s|BACKEND_IMAGE=.*|BACKEND_IMAGE=$ECR_REGISTRY/$ECR_BACKEND_REPO:$IMAGE_SHA|" .env
+            sed -i "s|FRONTEND_IMAGE=.*|FRONTEND_IMAGE=$ECR_REGISTRY/$ECR_FRONTEND_REPO:$IMAGE_SHA|" .env
+
+            # Rolling update — restart only changed services
+            POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+              docker compose up -d --no-build backend frontend
+
+            # Smoke test
+            sleep 15
+            curl -fsSL http://localhost:8000/health | grep '"status":"healthy"'
+
+            echo "Deploy complete: $IMAGE_SHA"
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "::notice title=Deploy succeeded::SHA ${{ steps.sha.outputs.value }} is live on EC2"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error title=Deploy failed::Check the SSH deploy step logs"

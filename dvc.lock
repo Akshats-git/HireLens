@@ -1,0 +1,35 @@
+schema: '2.0'
+stages:
+  ingest:
+    cmd: python -m src.data.data_pipeline --stage ingest
+    deps:
+    - path: configs/config.yaml
+      hash: md5
+      md5: 9cd00e651ecdea457aedae15cb961703
+      size: 6636
+    - path: src/data/data_pipeline.py
+      hash: md5
+      md5: 53b7aa6c6c2fef6d29c7ea0d6f50e635
+      size: 8215
+    - path: src/data/ingestion.py
+      hash: md5
+      md5: 5b9f229a3f6028bdeccef33cf0c0f819
+      size: 12711
+    params:
+      params.yaml:
+        data.max_resume_chars: 15000
+        data.min_resume_chars: 200
+        data.random_seed: 42
+    outs:
+    - path: data/raw/jobs_clean.csv
+      hash: md5
+      md5: 3ef37cbcc76a7967c947c69015a9921d
+      size: 474676247
+    - path: data/raw/resumes_clean.csv
+      hash: md5
+      md5: ba6ac080f3ab17bcf287cbdc1fb43bd0
+      size: 15692992
+    - path: logs/dataset_distributions.json
+      hash: md5
+      md5: a35f4125bd5875cfedd6f74cdbfc8610
+      size: 226
