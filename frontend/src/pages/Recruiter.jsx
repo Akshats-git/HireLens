@@ -17,7 +17,7 @@ function getScoreStyle(score) {
 }
 
 function ScoreBadge({ score }) {
-  const { text, bg } = getScoreStyle(score);
+  const { text } = getScoreStyle(score);
   return (
     <div className="relative w-12 h-12 shrink-0">
       <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
@@ -268,7 +268,9 @@ export default function Recruiter() {
       try {
         const data = await filterCandidates(DEFAULT_FILTERS);
         setCandidates(data.candidates);
-      } catch {}
+      } catch {
+        // filter reset failure is non-critical
+      }
       setFiltering(false);
     }
   };
