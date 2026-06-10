@@ -1,0 +1,114 @@
+{
+  "generated_at": "2026-06-11",
+  "model": {
+    "base": "sentence-transformers/all-MiniLM-L6-v2",
+    "fine_tuned_path": "models/fine_tuned/hirelens_matcher",
+    "embedding_dim": 384,
+    "max_seq_length": 256,
+    "size_on_disk_mb": 608,
+    "training_device": "NVIDIA GeForce GTX 1650 (3.9 GB VRAM)"
+  },
+  "training": {
+    "framework": "sentence-transformers 3.0.1",
+    "loss": "CosineSimilarityLoss",
+    "epochs": 5,
+    "batch_size": 32,
+    "learning_rate": 2e-5,
+    "fp16": true,
+    "train_pairs": 5692,
+    "val_pairs": 712,
+    "train_split": {
+      "positive": 1897,
+      "negative": 3795
+    },
+    "val_pearson_cosine": 0.6218,
+    "val_spearman_cosine": 0.5613,
+    "training_duration_minutes": 56
+  },
+  "dataset": {
+    "raw_resumes": 19020,
+    "raw_job_descriptions": 3341529,
+    "eval_resumes_kaggle": 1200,
+    "linkedin_job_postings": "3.3M rows",
+    "sources": [
+      "Kaggle Resume Dataset (1,200 structured resumes)",
+      "LinkedIn Job Postings dataset (3.3M listings with skills, salaries, industries)",
+      "Synthetic weak-supervision pairs via cosine similarity thresholding"
+    ]
+  },
+  "evaluation": {
+    "eval_samples": 712,
+    "methodology": "Retrieval-based grouping: resumes ranked against job description pool; positive pair = matching domain/role",
+    "retrieval_metrics": {
+      "ndcg_at_1": 0.8958,
+      "ndcg_at_3": 0.9616,
+      "ndcg_at_5": 0.9616,
+      "ndcg_at_10": 0.9616,
+      "precision_at_1": 0.8958,
+      "mrr": 0.9479,
+      "auc_roc": 0.8368,
+      "pearson_cosine": 0.6206,
+      "spearman_cosine": 0.5497
+    },
+    "ner_metrics": {
+      "note": "Token-level micro-averaged on 1,200-resume Kaggle eval set; skill extraction from taxonomy of 595 technical + 51 soft + 35 certification terms",
+      "precision": 0.7708,
+      "recall": 0.7708,
+      "f1": 0.7708
+    },
+    "targets": {
+      "ndcg_at_10": {"target": 0.80, "actual": 0.9616, "passed": true},
+      "auc_roc": {"target": 0.80, "actual": 0.8368, "passed": true},
+      "ner_f1": {"target": 0.88, "actual": 0.7708, "passed": false, "note": "Taxonomy coverage limited to 595 technical skills; OOV skills reduce recall"}
+    }
+  },
+  "inference_latency": {
+    "device": "NVIDIA GeForce GTX 1650 (GPU, local dev)",
+    "note_ec2": "AWS t3.micro uses CPU-only inference; expect 3-5x higher latency",
+    "embedding_single_pair_ms": {
+      "mean": 27.4,
+      "p50_warm": 0.1,
+      "note": "P50 is near-zero due to disk cache hit (SHA-256 keyed); first-call mean includes model warmup"
+    },
+    "ner_extraction_ms": {
+      "mean": 85.8,
+      "p50": 84.5,
+      "model": "spaCy en_core_web_trf (transformer-based)"
+    },
+    "full_scoring_pipeline_ms": {
+      "mean": 164.9,
+      "p50": 164.8,
+      "min": 159.3,
+      "components": "embeddings + NER + 4-component weighted score"
+    },
+    "estimated_api_response_single_resume_ms": {
+      "estimate": 350,
+      "breakdown": "~100ms PDF parse + ~85ms NER + ~165ms scoring"
+    },
+    "bulk_50_resumes": {
+      "total_ms": 8119,
+      "per_resume_ms": 162.4,
+      "note": "Sequential scoring on GPU; production backend uses 8-thread async pool for concurrency"
+    }
+  },
+  "scoring_system": {
+    "components": {
+      "skills_match": {"weight": 0.40, "method": "60% Jaccard + 40% semantic similarity"},
+      "experience_relevance": {"weight": 0.30, "method": "semantic similarity + years-of-experience alignment"},
+      "education_fit": {"weight": 0.15, "method": "degree hierarchy gap penalty"},
+      "keyword_alignment": {"weight": 0.15, "method": "TF-IDF weighted overlap of top-20 keywords"}
+    },
+    "thresholds": {
+      "excellent": 85,
+      "good": 70,
+      "fair": 50,
+      "poor_below": 50
+    }
+  },
+  "tests": {
+    "total": 30,
+    "passed": 30,
+    "failed": 0,
+    "coverage_modules": ["backend", "src"]
+  }
+}
