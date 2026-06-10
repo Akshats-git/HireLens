@@ -70,11 +70,14 @@ USER appuser
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    API_WORKERS=4
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=20s --timeout=10s --start-period=40s --retries=5 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Worker count is controlled by API_WORKERS env var.
+# Production on t2.micro: set API_WORKERS=1 to save ~600 MB RAM.
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS}"]

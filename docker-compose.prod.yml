@@ -1,0 +1,119 @@
+# =============================================================================
+# HireLens — Production Docker Compose
+# Uses pre-built images from ghcr.io (GitHub Container Registry — free).
+#
+# Usage on EC2:
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Images are built and pushed by GitHub Actions on every push to main.
+# Set GHCR_USER to your GitHub username before running.
+# =============================================================================
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+networks:
+  hirelens-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  model_cache:
+  upload_data:
+
+services:
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: hirelens-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru --save ""
+    volumes:
+      - redis_data:/data
+    networks:
+      - hirelens-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16.3-alpine
+    container_name: hirelens-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hirelens}
+      POSTGRES_USER: ${POSTGRES_USER:-hirelens_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - hirelens-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hirelens_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  backend:
+    image: ghcr.io/${GHCR_USER}/hirelens-backend:latest
+    container_name: hirelens-backend
+    restart: unless-stopped
+    env_file: .env.prod
+    environment:
+      # Override for Docker networking
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hirelens_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hirelens}
+      REDIS_URL: redis://redis:6379/0
+      # 1 worker on t2.micro — saves ~600 MB RAM vs the default 4
+      API_WORKERS: "1"
+    volumes:
+      - upload_data:/app/uploads
+      - model_cache:/app/models/cache
+    ports:
+      - "8000:8000"
+    networks:
+      - hirelens-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 90s    # ML model takes ~60s to load on t2.micro with swap
+    logging: *default-logging
+
+  # ── React Frontend ─────────────────────────────────────────────────────────
+  frontend:
+    image: ghcr.io/${GHCR_USER}/hirelens-frontend:latest
+    container_name: hirelens-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    networks:
+      - hirelens-net
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging

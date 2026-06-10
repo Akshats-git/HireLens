@@ -1,0 +1,59 @@
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "root"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/lib/docker/containers/**/*-json.log",
+            "log_group_name": "/hirelens/docker",
+            "log_stream_name": "{instance_id}/containers",
+            "multi_line_start_pattern": "^\\{",
+            "timestamp_format": "%Y-%m-%dT%H:%M:%S"
+          },
+          {
+            "file_path": "/var/log/nginx/access.log",
+            "log_group_name": "/hirelens/nginx",
+            "log_stream_name": "{instance_id}/access"
+          },
+          {
+            "file_path": "/var/log/nginx/error.log",
+            "log_group_name": "/hirelens/nginx",
+            "log_stream_name": "{instance_id}/error"
+          }
+        ]
+      }
+    },
+    "log_stream_name": "{instance_id}"
+  },
+  "metrics": {
+    "namespace": "HireLens/EC2",
+    "metrics_collected": {
+      "cpu": {
+        "measurement": ["cpu_usage_idle", "cpu_usage_user", "cpu_usage_system"],
+        "metrics_collection_interval": 60,
+        "totalcpu": true
+      },
+      "mem": {
+        "measurement": ["mem_used_percent", "mem_available"],
+        "metrics_collection_interval": 60
+      },
+      "swap": {
+        "measurement": ["swap_used_percent"],
+        "metrics_collection_interval": 60
+      },
+      "disk": {
+        "measurement": ["used_percent"],
+        "metrics_collection_interval": 300,
+        "resources": ["/"]
+      }
+    },
+    "append_dimensions": {
+      "InstanceId": "${aws:InstanceId}",
+      "InstanceType": "${aws:InstanceType}"
+    }
+  }
+}
