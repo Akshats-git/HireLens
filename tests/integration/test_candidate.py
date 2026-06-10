@@ -12,6 +12,7 @@ from tests.conftest import MINIMAL_PDF, MOCK_JD_TEXT, MOCK_RESULT
 
 # ── Happy path ─────────────────────────────────────────────────────────────────
 
+
 def test_analyze_returns_200(client):
     resp = client.post(
         "/api/candidate/analyze",
@@ -37,7 +38,12 @@ def test_analyze_response_shape(client):
     assert "processing_time_ms" in body
 
     bd = body["breakdown"]
-    for key in ("skills_match", "experience_relevance", "education_fit", "keyword_alignment"):
+    for key in (
+        "skills_match",
+        "experience_relevance",
+        "education_fit",
+        "keyword_alignment",
+    ):
         assert key in bd, f"breakdown missing key: {key}"
 
 
@@ -65,6 +71,7 @@ def test_analyze_matched_skills(client):
 
 
 # ── Error cases ────────────────────────────────────────────────────────────────
+
 
 def test_analyze_missing_jd_returns_422(client):
     resp = client.post(
@@ -96,7 +103,13 @@ def test_analyze_empty_file_returns_400(client):
 def test_analyze_non_pdf_returns_415(client):
     resp = client.post(
         "/api/candidate/analyze",
-        files={"resume": ("doc.docx", b"PK\x03\x04fake", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+        files={
+            "resume": (
+                "doc.docx",
+                b"PK\x03\x04fake",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
         data={"job_description": MOCK_JD_TEXT},
     )
     assert resp.status_code == 415
@@ -114,6 +127,7 @@ def test_analyze_oversized_file_returns_413(client):
 
 # ── Cache behaviour ────────────────────────────────────────────────────────────
 
+
 def test_analyze_second_call_uses_cache(client, mock_ml):
     """Second identical request should hit cache → ml.analyze called exactly once."""
     mock_ml.analyze.reset_mock()
@@ -126,6 +140,6 @@ def test_analyze_second_call_uses_cache(client, mock_ml):
         )
         assert resp.status_code == 200
 
-    assert mock_ml.analyze.call_count <= 1, (
-        "ml.analyze should be called at most once when both requests are identical"
-    )
+    assert (
+        mock_ml.analyze.call_count <= 1
+    ), "ml.analyze should be called at most once when both requests are identical"

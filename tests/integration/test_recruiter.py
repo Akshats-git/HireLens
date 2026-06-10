@@ -13,6 +13,7 @@ from backend.routers import recruiter as rec_module
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+
 def _upload_files(count: int = 2):
     return [
         ("resumes", (f"candidate_{i}.pdf", MINIMAL_PDF, "application/pdf"))
@@ -21,6 +22,7 @@ def _upload_files(count: int = 2):
 
 
 # ── Bulk-analyze happy path ────────────────────────────────────────────────────
+
 
 def test_bulk_analyze_returns_200(client):
     resp = client.post(
@@ -82,6 +84,7 @@ def test_bulk_analyze_stores_candidates(client):
 
 # ── Error cases for bulk-analyze ──────────────────────────────────────────────
 
+
 def test_bulk_analyze_no_files_returns_400(client):
     resp = client.post(
         "/api/recruiter/bulk-analyze",
@@ -111,6 +114,7 @@ def test_bulk_analyze_oversized_file_returns_413(client):
 
 # ── GET /candidate/{id} ────────────────────────────────────────────────────────
 
+
 def test_get_candidate_returns_full_breakdown(client):
     # First create a candidate via bulk-analyze
     resp = client.post(
@@ -135,6 +139,7 @@ def test_get_candidate_not_found_returns_404(client):
 
 
 # ── POST /filter ───────────────────────────────────────────────────────────────
+
 
 @pytest.fixture(autouse=False)
 def seeded_store(client):

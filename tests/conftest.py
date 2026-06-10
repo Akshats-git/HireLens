@@ -51,11 +51,11 @@ MOCK_JD_TEXT = (
 # ── Minimal valid PDF ──────────────────────────────────────────────────────────
 # Created with reportlab offline and stored as raw bytes so tests have no deps.
 
+
 def _make_minimal_pdf() -> bytes:
     """Return a minimal syntactically-valid PDF with one text page."""
     content = (
-        b"BT /F1 12 Tf 72 720 Td "
-        b"(Python FastAPI SQL Docker Engineer resume) Tj ET"
+        b"BT /F1 12 Tf 72 720 Td " b"(Python FastAPI SQL Docker Engineer resume) Tj ET"
     )
     length = len(content)
     return (
@@ -64,9 +64,11 @@ def _make_minimal_pdf() -> bytes:
         b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
         b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]\n"
         b"  /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n"
-        b"4 0 obj\n<< /Length " + str(length).encode() + b" >>\nstream\n"
-        + content +
-        b"\nendstream\nendobj\n"
+        b"4 0 obj\n<< /Length "
+        + str(length).encode()
+        + b" >>\nstream\n"
+        + content
+        + b"\nendstream\nendobj\n"
         b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
         b"xref\n0 6\n"
         b"0000000000 65535 f \n"
@@ -85,6 +87,7 @@ MINIMAL_PDF = _make_minimal_pdf()
 
 # ── Mock ML service fixture ────────────────────────────────────────────────────
 
+
 @pytest.fixture(scope="session")
 def mock_ml():
     svc = MagicMock()
@@ -95,6 +98,7 @@ def mock_ml():
 
 
 # ── TestClient fixture ─────────────────────────────────────────────────────────
+
 
 @pytest.fixture(scope="session")
 def client(mock_ml):
@@ -126,8 +130,10 @@ def client(mock_ml):
         patches[4],
     ):
         from backend.main import app
+
         # Clear candidate store between test sessions
         from backend.routers import recruiter as rec_module
+
         rec_module._candidate_store.clear()
 
         with TestClient(app, raise_server_exceptions=True) as c:
