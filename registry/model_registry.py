@@ -14,12 +14,17 @@ Usage:
 
 import argparse
 import datetime
+import json
 import sys
 from pathlib import Path
 
 import mlflow
 from mlflow import MlflowClient
 from loguru import logger
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EVAL_REPORT  = PROJECT_ROOT / "logs" / "evaluation_report.json"
+MODEL_DIR    = PROJECT_ROOT / "models" / "fine_tuned" / "hirelens_matcher"
 
 from registry.config import (
     EXPERIMENT_NAME,
@@ -101,10 +106,10 @@ def list_versions(client: MlflowClient) -> None:
         logger.info("No registered versions found.")
         return
 
-    # Build alias → version map
+    # model.aliases is already a dict[alias_str → version_str]
     try:
         model = client.get_registered_model(REGISTERED_MODEL_NAME)
-        alias_map: dict[str, str] = {a.alias: a.version for a in model.aliases}
+        alias_map: dict[str, str] = dict(model.aliases)  # {'production': '2', ...}
     except Exception:
         alias_map = {}
 
@@ -112,10 +117,67 @@ def list_versions(client: MlflowClient) -> None:
     print("-" * 82)
     for v in sorted(versions, key=lambda x: int(x.version)):
         ts = datetime.datetime.fromtimestamp(v.creation_timestamp // 1000).strftime("%Y-%m-%d %H:%M")
-        aliases = [a for a, ver in alias_map.items() if ver == v.version]
+        aliases = [a for a, ver in alias_map.items() if ver == str(v.version)]
         alias_str = ", ".join(aliases) if aliases else "-"
         print(f"{v.version:<5} {alias_str:<22} {v.run_id:<32} {ts}")
     print()
+
+
+def seed_run_from_eval_report() -> str:
+    """
+    Create an MLflow run from the existing evaluation_report.json + local model dir.
+    Use this when the original training run never reached the MLflow server.
+    Returns the new run_id.
+    """
+    if not EVAL_REPORT.exists():
+        logger.error(f"Eval report not found: {EVAL_REPORT}")
+        sys.exit(1)
+    if not MODEL_DIR.exists():
+        logger.error(f"Model directory not found: {MODEL_DIR}")
+        sys.exit(1)
+
+    with open(EVAL_REPORT) as f:
+        report = json.load(f)
+
+    retrieval = report.get("retrieval", {})
+    ner       = report.get("ner", {})
+
+    flat_metrics = {
+        "precision_at_1":  retrieval.get("precision_at_1", 0.0),
+        "precision_at_3":  retrieval.get("precision_at_3", 0.0),
+        "precision_at_5":  retrieval.get("precision_at_5", 0.0),
+        "ndcg_at_10":      retrieval.get("ndcg_at_10", 0.0),
+        "auc_roc":         retrieval.get("auc_roc", 0.0),
+        "mrr":             retrieval.get("mrr", 0.0),
+        "pearson_cosine":  retrieval.get("pearson_cosine", 0.0),
+        "spearman_cosine": retrieval.get("spearman_cosine", 0.0),
+        "ner_f1":          ner.get("f1", 0.0),
+        "ner_precision":   ner.get("precision", 0.0),
+        "ner_recall":      ner.get("recall", 0.0),
+    }
+
+    exp_id = get_or_create_experiment()
+    with mlflow.start_run(experiment_id=exp_id, run_name="seeded-from-eval-report") as run:
+        mlflow.log_metrics(flat_metrics)
+        mlflow.log_param("model_path", str(MODEL_DIR))
+        mlflow.log_param("source", "seeded-from-existing-eval-report")
+        mlflow.set_tag("stage", "fine_tuning")
+        mlflow.set_tag("seeded", "true")
+
+        logger.info(f"Logging model artifact from {MODEL_DIR} (may take a moment)...")
+        try:
+            mlflow.log_artifacts(str(MODEL_DIR), artifact_path="model")
+        except Exception as exc:
+            logger.warning(f"Artifact upload skipped (no remote store): {exc}")
+            mlflow.log_param("local_model_path", str(MODEL_DIR))
+
+        run_id = run.info.run_id
+
+    logger.success(f"Seeded MLflow run: {run_id}")
+    logger.info("Metrics logged:")
+    for k, v in flat_metrics.items():
+        logger.info(f"  {k}: {v:.4f}")
+    return run_id
 
 
 def find_best_training_run(client: MlflowClient) -> str | None:
@@ -154,6 +216,9 @@ def main() -> None:
                         help="Directly promote a version number to production alias")
     parser.add_argument("--dry-run", action="store_true",
                         help="Check thresholds but do not register or promote")
+    parser.add_argument("--seed-from-eval", action="store_true",
+                        help="Create an MLflow run from logs/evaluation_report.json + local model, "
+                             "then register and promote if thresholds pass")
     args = parser.parse_args()
 
     mlflow.set_tracking_uri(get_tracking_uri())
@@ -164,6 +229,9 @@ def main() -> None:
     if args.list:
         list_versions(client)
         return
+
+    if args.seed_from_eval:
+        args.run_id = seed_run_from_eval_report()
 
     if args.promote_version:
         promote_to_production(client, args.promote_version)
