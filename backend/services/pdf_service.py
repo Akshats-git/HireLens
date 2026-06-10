@@ -6,7 +6,6 @@ Tries pdfplumber first (better layout preservation), falls back to PyMuPDF
 """
 
 import io
-from pathlib import Path
 
 
 def extract_text(file_bytes: bytes, filename: str = "") -> str:

@@ -19,12 +19,8 @@ import sys
 from pathlib import Path
 
 import mlflow
-from mlflow import MlflowClient
 from loguru import logger
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EVAL_REPORT = PROJECT_ROOT / "logs" / "evaluation_report.json"
-MODEL_DIR = PROJECT_ROOT / "models" / "fine_tuned" / "hirelens_matcher"
+from mlflow import MlflowClient
 
 from registry.config import (
     EXPERIMENT_NAME,
@@ -34,6 +30,10 @@ from registry.config import (
     get_or_create_experiment,
     get_tracking_uri,
 )
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EVAL_REPORT = PROJECT_ROOT / "logs" / "evaluation_report.json"
+MODEL_DIR = PROJECT_ROOT / "models" / "fine_tuned" / "hirelens_matcher"
 
 logger.remove()
 logger.add(

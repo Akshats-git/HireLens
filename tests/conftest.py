@@ -4,7 +4,6 @@ Shared pytest fixtures.
 ML models and PDF extraction are mocked so tests run without GPU/model files.
 """
 
-import io
 import pytest
 from unittest.mock import MagicMock, patch
 

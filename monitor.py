@@ -180,7 +180,7 @@ def run_check(force_retrain: bool = False) -> bool:
         return False
 
     if failures:
-        msg = f"Metric regression detected — triggering retraining: " + ", ".join(
+        msg = "Metric regression detected — triggering retraining: " + ", ".join(
             f"{n}={a:.4f}<{t}" for n, a, t in failures
         )
         logger.warning(msg)

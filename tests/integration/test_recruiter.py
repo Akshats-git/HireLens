@@ -7,7 +7,7 @@ Integration tests for recruiter endpoints:
 
 import pytest
 
-from tests.conftest import MINIMAL_PDF, MOCK_JD_TEXT, MOCK_RESULT
+from tests.conftest import MINIMAL_PDF, MOCK_JD_TEXT
 from backend.routers import recruiter as rec_module
 
 

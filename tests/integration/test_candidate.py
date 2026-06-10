@@ -4,9 +4,6 @@ Integration tests for POST /api/candidate/analyze.
 ML inference and PDF extraction are mocked (see tests/conftest.py).
 """
 
-import io
-import pytest
-
 from tests.conftest import MINIMAL_PDF, MOCK_JD_TEXT, MOCK_RESULT
 
 

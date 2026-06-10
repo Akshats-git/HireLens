@@ -14,7 +14,6 @@ Falls back to set-intersection if pyahocorasick is not installed.
 """
 
 import json
-import os
 import re
 import sys
 from dataclasses import dataclass, field

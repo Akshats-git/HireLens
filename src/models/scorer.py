@@ -304,9 +304,6 @@ def score_education_fit(resume_text: str, jd_text: str) -> float:
     Returns:
         Score in [0, 1].
     """
-    cfg = _load_config()
-    degree_weights = cfg["scoring"]["education"]["degree_weights"]
-
     resume_edu = _detect_education(resume_text)
     jd_edu = _detect_education(jd_text)
 
