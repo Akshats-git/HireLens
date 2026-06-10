@@ -23,17 +23,32 @@ import pandas as pd
 import torch
 import yaml
 from loguru import logger
-from sentence_transformers import SentenceTransformer, SentenceTransformerTrainer, SentenceTransformerTrainingArguments
-from sentence_transformers.evaluation import EmbeddingSimilarityEvaluator, SimilarityFunction
+from sentence_transformers import (
+    SentenceTransformer,
+    SentenceTransformerTrainer,
+    SentenceTransformerTrainingArguments,
+)
+from sentence_transformers.evaluation import (
+    EmbeddingSimilarityEvaluator,
+    SimilarityFunction,
+)
 from sentence_transformers.losses import CosineSimilarityLoss
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _CONFIG_PATH = PROJECT_ROOT / "configs" / "config.yaml"
 
 logger.remove()
-logger.add(sys.stderr, level="INFO",
-           format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}")
-logger.add(PROJECT_ROOT / "logs" / "training.log", rotation="100 MB", retention="30 days", level="DEBUG")
+logger.add(
+    sys.stderr,
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}",
+)
+logger.add(
+    PROJECT_ROOT / "logs" / "training.log",
+    rotation="100 MB",
+    retention="30 days",
+    level="DEBUG",
+)
 
 
 def _load_config() -> dict:
@@ -42,6 +57,7 @@ def _load_config() -> dict:
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
+
 
 def load_pairs(csv_path: Path, max_samples: int | None = None) -> pd.DataFrame:
     """
@@ -68,16 +84,15 @@ def load_pairs(csv_path: Path, max_samples: int | None = None) -> pd.DataFrame:
     df["job_description"] = df["job_description"].str.strip()
 
     # Drop rows with very short texts
-    df = df[
-        (df["resume_text"].str.len() > 50) &
-        (df["job_description"].str.len() > 50)
-    ]
+    df = df[(df["resume_text"].str.len() > 50) & (df["job_description"].str.len() > 50)]
 
     if max_samples:
         df = df.sample(min(max_samples, len(df)), random_state=42)
 
-    logger.info(f"Loaded {len(df)} pairs from {csv_path.name} | "
-                f"pos: {(df['label'] == 1.0).sum()}, neg: {(df['label'] == 0.0).sum()}")
+    logger.info(
+        f"Loaded {len(df)} pairs from {csv_path.name} | "
+        f"pos: {(df['label'] == 1.0).sum()}, neg: {(df['label'] == 0.0).sum()}"
+    )
     return df.reset_index(drop=True)
 
 
@@ -89,16 +104,22 @@ def df_to_hf_dataset(df: pd.DataFrame):
     Required columns: sentence1, sentence2, label
     """
     from datasets import Dataset
-    return Dataset.from_dict({
-        "sentence1": df["resume_text"].tolist(),
-        "sentence2": df["job_description"].tolist(),
-        "label": df["label"].astype(float).tolist(),
-    })
+
+    return Dataset.from_dict(
+        {
+            "sentence1": df["resume_text"].tolist(),
+            "sentence2": df["job_description"].tolist(),
+            "label": df["label"].astype(float).tolist(),
+        }
+    )
 
 
 # ── Evaluator builder ─────────────────────────────────────────────────────────
 
-def build_evaluator(val_df: pd.DataFrame, name: str = "val") -> EmbeddingSimilarityEvaluator:
+
+def build_evaluator(
+    val_df: pd.DataFrame, name: str = "val"
+) -> EmbeddingSimilarityEvaluator:
     """
     Build an EmbeddingSimilarityEvaluator from a validation DataFrame.
 
@@ -119,6 +140,7 @@ def build_evaluator(val_df: pd.DataFrame, name: str = "val") -> EmbeddingSimilar
 
 
 # ── Training ──────────────────────────────────────────────────────────────────
+
 
 def train(
     epochs: int | None = None,
@@ -147,7 +169,9 @@ def train(
 
     # Resolve params (CLI args override config)
     n_epochs = epochs if epochs is not None else ft["num_train_epochs"]
-    train_bs = batch_size if batch_size is not None else ft["per_device_train_batch_size"]
+    train_bs = (
+        batch_size if batch_size is not None else ft["per_device_train_batch_size"]
+    )
     use_fp16 = fp16 if fp16 is not None else (ft["fp16"] and device == "cuda")
     output_dir = PROJECT_ROOT / ft["output_dir"]
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -162,15 +186,17 @@ def train(
     logger.info("=" * 60)
 
     if device == "cuda":
-        logger.info(f"GPU: {torch.cuda.get_device_name(0)} | "
-                    f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+        logger.info(
+            f"GPU: {torch.cuda.get_device_name(0)} | "
+            f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB"
+        )
 
     # ── Load data ─────────────────────────────────────────────────────────────
     train_path = PROJECT_ROOT / "data" / "processed" / "train_pairs.csv"
-    val_path   = PROJECT_ROOT / "data" / "processed" / "val_pairs.csv"
+    val_path = PROJECT_ROOT / "data" / "processed" / "val_pairs.csv"
 
     train_df = load_pairs(train_path, max_samples=max_train_samples)
-    val_df   = load_pairs(val_path)
+    val_df = load_pairs(val_path)
 
     train_dataset = df_to_hf_dataset(train_df)
     evaluator = build_evaluator(val_df, name="val")
@@ -200,7 +226,7 @@ def train(
         metric_for_best_model=ft["metric_for_best_model"],
         fp16=use_fp16,
         dataloader_num_workers=0,  # 0 avoids CUDA fork issues on Linux
-        report_to="none",           # disable HF hub reporting; we use MLflow
+        report_to="none",  # disable HF hub reporting; we use MLflow
         logging_steps=50,
         save_total_limit=2,
     )
@@ -212,18 +238,20 @@ def train(
 
     with mlflow.start_run(run_name=run_name) as run:
         # Log hyperparameters
-        mlflow.log_params({
-            "base_model": base_model_name,
-            "epochs": n_epochs,
-            "train_batch_size": train_bs,
-            "learning_rate": ft["learning_rate"],
-            "warmup_steps": warmup,
-            "fp16": use_fp16,
-            "train_samples": len(train_df),
-            "val_samples": len(val_df),
-            "max_seq_length": 256,
-            "loss": "CosineSimilarityLoss",
-        })
+        mlflow.log_params(
+            {
+                "base_model": base_model_name,
+                "epochs": n_epochs,
+                "train_batch_size": train_bs,
+                "learning_rate": ft["learning_rate"],
+                "warmup_steps": warmup,
+                "fp16": use_fp16,
+                "train_samples": len(train_df),
+                "val_samples": len(val_df),
+                "max_seq_length": 256,
+                "loss": "CosineSimilarityLoss",
+            }
+        )
         mlflow.set_tags(cfg["mlflow"]["run_tags"])
         mlflow.set_tag("stage", "fine_tuning")
 
@@ -256,13 +284,15 @@ def train(
             metrics_out = {k: float(v) for k, v in eval_results.items()}
         else:
             metrics_out = {"val_cosine_pearson": float(eval_results)}
-        metrics_out.update({
-            "epochs": n_epochs,
-            "train_batch_size": train_bs,
-            "learning_rate": ft["learning_rate"],
-            "train_samples": len(train_df),
-            "val_samples": len(val_df),
-        })
+        metrics_out.update(
+            {
+                "epochs": n_epochs,
+                "train_batch_size": train_bs,
+                "learning_rate": ft["learning_rate"],
+                "train_samples": len(train_df),
+                "val_samples": len(val_df),
+            }
+        )
         metrics_path = PROJECT_ROOT / "logs" / "training_metrics.json"
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
         with open(metrics_path, "w") as f:
@@ -277,9 +307,13 @@ def train(
         mlflow.log_param("model_saved_path", str(output_dir))
         try:
             mlflow.log_artifacts(str(output_dir), artifact_path="model")
-            logger.success(f"Model artifacts logged to MLflow. Run ID: {run.info.run_id}")
+            logger.success(
+                f"Model artifacts logged to MLflow. Run ID: {run.info.run_id}"
+            )
         except Exception as e:
-            logger.warning(f"MLflow artifact upload skipped (no remote store configured): {e}")
+            logger.warning(
+                f"MLflow artifact upload skipped (no remote store configured): {e}"
+            )
             logger.info(f"Model is saved locally at: {output_dir}")
 
     return model
@@ -287,13 +321,18 @@ def train(
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fine-tune HireLens resume matcher.")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--no-fp16", action="store_true", help="Disable FP16 training")
-    parser.add_argument("--max-train-samples", type=int, default=None,
-                        help="Cap training set for quick experiments")
+    parser.add_argument(
+        "--max-train-samples",
+        type=int,
+        default=None,
+        help="Cap training set for quick experiments",
+    )
     parser.add_argument("--run-name", default="finetune-miniLM")
     args = parser.parse_args()
 

@@ -16,10 +16,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # Experience level thresholds (years)
 _EXP_LEVELS = [
-    ("lead",   10.0),
-    ("senior",  5.0),
-    ("mid",     2.0),
-    ("entry",   0.0),
+    ("lead", 10.0),
+    ("senior", 5.0),
+    ("mid", 2.0),
+    ("entry", 0.0),
 ]
 
 

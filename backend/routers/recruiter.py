@@ -47,6 +47,7 @@ _candidate_store: dict[str, dict] = {}
 
 # ── Bulk analyze ───────────────────────────────────────────────────────────────
 
+
 @router.post(
     "/bulk-analyze",
     response_model=BulkAnalyzeResponse,
@@ -61,23 +62,31 @@ async def bulk_analyze(
     if len(resumes) == 0:
         raise HTTPException(status_code=400, detail="No resume files uploaded.")
     if len(resumes) > _MAX_RESUMES:
-        raise HTTPException(status_code=400, detail=f"Maximum {_MAX_RESUMES} resumes per request.")
+        raise HTTPException(
+            status_code=400, detail=f"Maximum {_MAX_RESUMES} resumes per request."
+        )
 
     # Read all bytes eagerly (network I/O, do sequentially in async context)
     file_data: list[tuple[str, bytes]] = []
     for upload in resumes:
         data = await upload.read()
         if len(data) > _MAX_FILE_BYTES:
-            raise HTTPException(status_code=413, detail=f"'{upload.filename}' exceeds 10 MB.")
+            raise HTTPException(
+                status_code=413, detail=f"'{upload.filename}' exceeds 10 MB."
+            )
         file_data.append((upload.filename or f"resume_{len(file_data)+1}.pdf", data))
 
     loop = asyncio.get_event_loop()
     ml = get_ml_service()
     cache = get_cache()
 
-    async def _process_one(filename: str, pdf_bytes: bytes) -> Optional[CandidateResult]:
+    async def _process_one(
+        filename: str, pdf_bytes: bytes
+    ) -> Optional[CandidateResult]:
         try:
-            resume_text: str = await loop.run_in_executor(_executor, extract_text, pdf_bytes, filename)
+            resume_text: str = await loop.run_in_executor(
+                _executor, extract_text, pdf_bytes, filename
+            )
             if len(resume_text) < 100:
                 logger.warning(f"Skipping '{filename}': insufficient extracted text.")
                 return None
@@ -85,7 +94,9 @@ async def bulk_analyze(
             cache_key = cache.make_analysis_key(resume_text, job_description)
             result = cache.get(cache_key)
             if result is None:
-                result = await loop.run_in_executor(_executor, ml.analyze, resume_text, job_description)
+                result = await loop.run_in_executor(
+                    _executor, ml.analyze, resume_text, job_description
+                )
                 cache.set(cache_key, result)
 
             cid = str(uuid.uuid4())
@@ -137,6 +148,7 @@ async def bulk_analyze(
 
 # ── Single candidate lookup ────────────────────────────────────────────────────
 
+
 @router.get(
     "/candidate/{candidate_id}",
     response_model=CandidateResult,
@@ -148,7 +160,7 @@ async def get_candidate(candidate_id: str) -> CandidateResult:
         raise HTTPException(
             status_code=404,
             detail=f"Candidate '{candidate_id}' not found. "
-                   "Run /bulk-analyze first, then use the returned IDs.",
+            "Run /bulk-analyze first, then use the returned IDs.",
         )
     return CandidateResult(**stored)
 

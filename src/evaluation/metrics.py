@@ -31,8 +31,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _CONFIG_PATH = PROJECT_ROOT / "configs" / "config.yaml"
 
 logger.remove()
-logger.add(sys.stderr, level="INFO",
-           format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}")
+logger.add(
+    sys.stderr,
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}",
+)
 
 
 def _load_config() -> dict:
@@ -41,6 +44,7 @@ def _load_config() -> dict:
 
 
 # ── Ranking metrics ───────────────────────────────────────────────────────────
+
 
 def precision_at_k(relevant: list[int], retrieved: list[int], k: int) -> float:
     """
@@ -71,10 +75,7 @@ def dcg_at_k(relevances: list[float], k: int) -> float:
         DCG@K value.
     """
     relevances = relevances[:k]
-    return sum(
-        rel / np.log2(rank + 2)
-        for rank, rel in enumerate(relevances)
-    )
+    return sum(rel / np.log2(rank + 2) for rank, rel in enumerate(relevances))
 
 
 def ndcg_at_k(relevances: list[float], k: int) -> float:
@@ -133,6 +134,7 @@ def average_precision_at_k(relevant: set[int], retrieved: list[int], k: int) -> 
 
 # ── NER / skill extraction F1 ─────────────────────────────────────────────────
 
+
 def token_level_f1(
     predictions: list[set[str]],
     ground_truths: list[set[str]],
@@ -155,13 +157,22 @@ def token_level_f1(
         fn += len(gt - pred)
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1        = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = (
+        (2 * precision * recall) / (precision + recall)
+        if (precision + recall) > 0
+        else 0.0
+    )
 
-    return {"precision": round(precision, 4), "recall": round(recall, 4), "f1": round(f1, 4)}
+    return {
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4),
+    }
 
 
 # ── Embedding-based retrieval evaluation ─────────────────────────────────────
+
 
 def evaluate_retrieval(
     model_path: str | Path | None,
@@ -205,15 +216,25 @@ def evaluate_retrieval(
 
     # ── Encode all texts ──────────────────────────────────────────────────────
     resumes = eval_df["resume_text"].tolist()
-    jds     = eval_df["job_description"].tolist()
-    labels  = eval_df["label"].astype(float).tolist()
+    jds = eval_df["job_description"].tolist()
+    labels = eval_df["label"].astype(float).tolist()
 
     logger.info(f"Encoding {len(resumes)} resumes...")
-    resume_embs = model.encode(resumes, batch_size=64, normalize_embeddings=True,
-                               show_progress_bar=True, convert_to_numpy=True)
+    resume_embs = model.encode(
+        resumes,
+        batch_size=64,
+        normalize_embeddings=True,
+        show_progress_bar=True,
+        convert_to_numpy=True,
+    )
     logger.info(f"Encoding {len(jds)} job descriptions...")
-    jd_embs = model.encode(jds, batch_size=64, normalize_embeddings=True,
-                           show_progress_bar=True, convert_to_numpy=True)
+    jd_embs = model.encode(
+        jds,
+        batch_size=64,
+        normalize_embeddings=True,
+        show_progress_bar=True,
+        convert_to_numpy=True,
+    )
 
     # ── Pair-level similarity scores ──────────────────────────────────────────
     sim_scores = np.einsum("ij,ij->i", resume_embs, jd_embs)  # dot product per pair
@@ -224,7 +245,9 @@ def evaluate_retrieval(
 
     # ── AUC-ROC ───────────────────────────────────────────────────────────────
     binary_labels = (np.array(labels) >= 0.5).astype(int)
-    auc = roc_auc_score(binary_labels, sim_scores) if len(set(binary_labels)) > 1 else 0.5
+    auc = (
+        roc_auc_score(binary_labels, sim_scores) if len(set(binary_labels)) > 1 else 0.5
+    )
 
     # ── Reranking within resume groups ────────────────────────────────────────
     eval_df = eval_df.copy()
@@ -232,7 +255,7 @@ def evaluate_retrieval(
     eval_df["_bin_label"] = binary_labels
 
     precision_scores: dict[int, list[float]] = {k: [] for k in k_values}
-    ndcg_scores:      dict[int, list[float]] = {k: [] for k in k_values}
+    ndcg_scores: dict[int, list[float]] = {k: [] for k in k_values}
     mrr_list: list[float] = []
 
     groups = eval_df.groupby("resume_text", sort=False)
@@ -248,7 +271,9 @@ def evaluate_retrieval(
             continue
 
         for k in k_values:
-            precision_scores[k].append(precision_at_k(list(relevant_set), ranked_indices, k))
+            precision_scores[k].append(
+                precision_at_k(list(relevant_set), ranked_indices, k)
+            )
             ndcg_scores[k].append(ndcg_at_k(ranked_rels, k))
 
         mrr_list.append(reciprocal_rank(relevant_set, ranked_indices))
@@ -269,6 +294,7 @@ def evaluate_retrieval(
 
 # ── NER evaluation ────────────────────────────────────────────────────────────
 
+
 def evaluate_ner(eval_df: pd.DataFrame) -> dict[str, float]:
     """
     Evaluate NER skill extraction against the structured Kaggle eval set.
@@ -288,6 +314,7 @@ def evaluate_ner(eval_df: pd.DataFrame) -> dict[str, float]:
 
     from src.features.ner import get_extractor
     from src.data.synthetic_gen import build_resume_text
+
     extractor = get_extractor()
 
     predictions: list[set[str]] = []
@@ -310,6 +337,7 @@ def evaluate_ner(eval_df: pd.DataFrame) -> dict[str, float]:
 
 
 # ── Full evaluation report ────────────────────────────────────────────────────
+
 
 def run_evaluation(
     model_path: str | Path | None = None,
@@ -348,7 +376,9 @@ def run_evaluation(
         logger.info(f"Capped to {n_eval} eval samples.")
 
     # Load Kaggle structured data for NER eval (has Skills column)
-    ner_source = PROJECT_ROOT / "data" / "raw" / "eval_dataset" / "resume_dataset_1200.csv"
+    ner_source = (
+        PROJECT_ROOT / "data" / "raw" / "eval_dataset" / "resume_dataset_1200.csv"
+    )
     ner_df = pd.read_csv(ner_source) if ner_source.exists() else pd.DataFrame()
 
     # ── Retrieval metrics ──────────────────────────────────────────────────────
@@ -374,7 +404,11 @@ def run_evaluation(
         actual = retrieval_metrics.get(metric, ner_metrics.get(ner_key, None))
         if actual is not None:
             passed = actual >= target
-            target_check[metric] = {"target": target, "actual": round(actual, 4), "passed": passed}
+            target_check[metric] = {
+                "target": target,
+                "actual": round(actual, 4),
+                "passed": passed,
+            }
             status = "✓ PASS" if passed else "✗ FAIL"
             logger.info(f"  {status} | {metric}: {actual:.4f} (target: {target})")
 
@@ -395,10 +429,17 @@ def run_evaluation(
     # Log to MLflow
     if log_to_mlflow:
         try:
-            mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000"))
+            mlflow.set_tracking_uri(
+                os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+            )
             mlflow.set_experiment(cfg["mlflow"]["experiment_name"])
             with mlflow.start_run(run_name="evaluation"):
-                mlflow.log_metrics({**retrieval_metrics, **{f"ner_{k}": v for k, v in ner_metrics.items()}})
+                mlflow.log_metrics(
+                    {
+                        **retrieval_metrics,
+                        **{f"ner_{k}": v for k, v in ner_metrics.items()},
+                    }
+                )
                 mlflow.log_artifact(str(report_path), artifact_path="evaluation")
                 mlflow.set_tag("stage", "evaluation")
                 logger.success("Evaluation metrics logged to MLflow.")
@@ -410,6 +451,7 @@ def run_evaluation(
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run HireLens evaluation suite.")
     parser.add_argument(
@@ -420,9 +462,8 @@ def main() -> None:
     parser.add_argument("--no-mlflow", action="store_true", help="Skip MLflow logging.")
     args = parser.parse_args()
 
-    model_path = (
-        args.model_path or
-        str(PROJECT_ROOT / "models" / "fine_tuned" / "hirelens_matcher")
+    model_path = args.model_path or str(
+        PROJECT_ROOT / "models" / "fine_tuned" / "hirelens_matcher"
     )
 
     run_evaluation(

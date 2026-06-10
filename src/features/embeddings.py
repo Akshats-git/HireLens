@@ -26,8 +26,11 @@ _CACHE_DIR = PROJECT_ROOT / "models" / "cache" / "embeddings"
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 logger.remove()
-logger.add(sys.stderr, level="INFO",
-           format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}")
+logger.add(
+    sys.stderr,
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}",
+)
 
 
 def _load_config() -> dict:
@@ -69,8 +72,10 @@ class EmbeddingModel:
         self.model.max_seq_length = self._max_seq_len
 
         if self.device == "cuda":
-            logger.info(f"GPU: {torch.cuda.get_device_name(0)} | "
-                        f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+            logger.info(
+                f"GPU: {torch.cuda.get_device_name(0)} | "
+                f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB"
+            )
 
     # ── Cache helpers ─────────────────────────────────────────────────────────
 
@@ -165,7 +170,7 @@ class EmbeddingModel:
         """
         a = np.atleast_2d(a)
         b = np.atleast_2d(b)
-        sims = (a @ b.T)
+        sims = a @ b.T
         return float(sims[0, 0]) if sims.shape == (1, 1) else sims.squeeze()
 
     @staticmethod

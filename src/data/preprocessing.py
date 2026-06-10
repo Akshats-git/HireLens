@@ -30,9 +30,17 @@ MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
 MLFLOW_EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT_NAME", "hirelens-resume-matching")
 
 logger.remove()
-logger.add(sys.stderr, level="INFO",
-           format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}")
-logger.add(PROJECT_ROOT / "logs" / "preprocessing.log", rotation="50 MB", retention="14 days", level="DEBUG")
+logger.add(
+    sys.stderr,
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}",
+)
+logger.add(
+    PROJECT_ROOT / "logs" / "preprocessing.log",
+    rotation="50 MB",
+    retention="14 days",
+    level="DEBUG",
+)
 
 
 # ── Section patterns ──────────────────────────────────────────────────────────
@@ -66,17 +74,38 @@ _SECTION_PATTERNS: dict[str, re.Pattern] = {
 
 # Maps resume category labels → job description keywords for weak supervision
 _CATEGORY_TO_JD_KEYWORDS: dict[str, list[str]] = {
-    "Data Science": ["machine learning", "data scientist", "analytics", "python", "statistics"],
+    "Data Science": [
+        "machine learning",
+        "data scientist",
+        "analytics",
+        "python",
+        "statistics",
+    ],
     "HR": ["human resources", "recruiter", "talent acquisition", "hr manager"],
     "Advocate": ["lawyer", "attorney", "legal counsel", "litigation"],
     "Arts": ["graphic design", "creative", "artist", "visual design"],
     "Web Designing": ["frontend developer", "ui/ux", "web designer", "html", "css"],
-    "Mechanical Engineer": ["mechanical engineer", "cad", "solidworks", "manufacturing"],
+    "Mechanical Engineer": [
+        "mechanical engineer",
+        "cad",
+        "solidworks",
+        "manufacturing",
+    ],
     "Sales": ["sales manager", "business development", "account executive", "revenue"],
-    "Health and fitness": ["fitness trainer", "nutritionist", "health coach", "wellness"],
+    "Health and fitness": [
+        "fitness trainer",
+        "nutritionist",
+        "health coach",
+        "wellness",
+    ],
     "Civil Engineer": ["civil engineer", "structural", "construction", "autocad"],
     "Java Developer": ["java developer", "spring boot", "microservices", "backend"],
-    "Business Analyst": ["business analyst", "requirements gathering", "stakeholders", "process"],
+    "Business Analyst": [
+        "business analyst",
+        "requirements gathering",
+        "stakeholders",
+        "process",
+    ],
     "SAP Developer": ["sap", "abap", "erp", "sap consultant"],
     "Automobile": ["automobile", "automotive engineer", "vehicle design"],
     "Agriculture": ["agriculture", "agronomist", "farming", "crop"],
@@ -87,13 +116,40 @@ _CATEGORY_TO_JD_KEYWORDS: dict[str, list[str]] = {
     "Digital Media": ["digital marketing", "seo", "content creator", "social media"],
     "DotNet Developer": [".net developer", "c#", "asp.net", "azure"],
     "Database": ["database administrator", "dba", "sql", "postgresql", "oracle"],
-    "Electrical Engineering": ["electrical engineer", "power systems", "plc", "embedded"],
+    "Electrical Engineering": [
+        "electrical engineer",
+        "power systems",
+        "plc",
+        "embedded",
+    ],
     "Construction": ["construction manager", "project manager", "site engineer"],
     "Public Relations": ["pr manager", "communications", "media relations", "press"],
-    "Operations Manager": ["operations manager", "supply chain", "logistics", "process improvement"],
-    "Python Developer": ["python developer", "django", "flask", "fastapi", "backend python"],
-    "ETL Developer": ["etl developer", "data pipeline", "airflow", "spark", "data engineer"],
-    "Network Security Engineer": ["network security", "cybersecurity", "firewall", "soc"],
+    "Operations Manager": [
+        "operations manager",
+        "supply chain",
+        "logistics",
+        "process improvement",
+    ],
+    "Python Developer": [
+        "python developer",
+        "django",
+        "flask",
+        "fastapi",
+        "backend python",
+    ],
+    "ETL Developer": [
+        "etl developer",
+        "data pipeline",
+        "airflow",
+        "spark",
+        "data engineer",
+    ],
+    "Network Security Engineer": [
+        "network security",
+        "cybersecurity",
+        "firewall",
+        "soc",
+    ],
     "PMO": ["project management", "pmo", "pmp", "agile", "scrum master"],
     "Chef": ["chef", "culinary", "kitchen manager", "food"],
     "Consultant": ["consultant", "advisory", "strategy", "management consulting"],
@@ -103,6 +159,7 @@ _CATEGORY_TO_JD_KEYWORDS: dict[str, list[str]] = {
 
 
 # ── PDF extraction ────────────────────────────────────────────────────────────
+
 
 def extract_text_from_pdf(pdf_path: Path) -> str:
     """
@@ -156,6 +213,7 @@ def extract_texts_from_pdf_dir(pdf_dir: Path) -> list[dict[str, str]]:
 
 # ── Text cleaning ─────────────────────────────────────────────────────────────
 
+
 def clean_text(text: str) -> str:
     """
     Full text cleaning pipeline for resume / job description text.
@@ -181,13 +239,22 @@ def clean_text(text: str) -> str:
     text = unicodedata.normalize("NFKC", text)
 
     # 2. Remove control characters (keep newlines and tabs)
-    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cc" or ch in "\n\t")
+    text = "".join(
+        ch for ch in text if unicodedata.category(ch) != "Cc" or ch in "\n\t"
+    )
 
     # 3. Replace unicode punctuation variants
     replacements = {
-        "’": "'", "‘": "'", "“": '"', "”": '"',
-        "–": "-", "—": "-", "•": "*", "·": "*",
-        "…": "...", "﻿": "",
+        "’": "'",
+        "‘": "'",
+        "“": '"',
+        "”": '"',
+        "–": "-",
+        "—": "-",
+        "•": "*",
+        "·": "*",
+        "…": "...",
+        "﻿": "",
     }
     for src, dst in replacements.items():
         text = text.replace(src, dst)
@@ -220,6 +287,7 @@ def clean_text(text: str) -> str:
 
 
 # ── Section detection ─────────────────────────────────────────────────────────
+
 
 def detect_sections(text: str) -> dict[str, str]:
     """
@@ -267,6 +335,7 @@ def has_required_sections(sections: dict[str, str], min_sections: int = 2) -> bo
 
 # ── Training pair construction ────────────────────────────────────────────────
 
+
 def build_training_pairs(
     resume_df: pd.DataFrame,
     jobs_df: pd.DataFrame,
@@ -293,6 +362,7 @@ def build_training_pairs(
           [resume_id, resume_text, job_description, label, resume_category, pair_type]
     """
     import numpy as np
+
     rng = np.random.default_rng(random_seed)
 
     logger.info("Building training pairs via category-based weak supervision...")
@@ -300,13 +370,16 @@ def build_training_pairs(
     pairs: list[dict[str, Any]] = []
     jobs_list = jobs_df.to_dict("records")
 
-    for _, resume_row in tqdm(resume_df.iterrows(), total=len(resume_df), desc="Pairing resumes"):
+    for _, resume_row in tqdm(
+        resume_df.iterrows(), total=len(resume_df), desc="Pairing resumes"
+    ):
         category = resume_row["category"]
         keywords = _CATEGORY_TO_JD_KEYWORDS.get(category, [category.lower()])
 
         # Find positive jobs: descriptions containing category keywords
         positive_jobs = [
-            j for j in jobs_list
+            j
+            for j in jobs_list
             if any(kw in j["description"].lower() for kw in keywords)
         ]
 
@@ -315,18 +388,21 @@ def build_training_pairs(
 
         # Sample 1 positive pair
         pos_job = positive_jobs[rng.integers(len(positive_jobs))]
-        pairs.append({
-            "resume_id": resume_row["id"],
-            "resume_text": resume_row["resume_text"],
-            "job_description": pos_job["description"],
-            "label": 1.0,
-            "resume_category": category,
-            "pair_type": "positive",
-        })
+        pairs.append(
+            {
+                "resume_id": resume_row["id"],
+                "resume_text": resume_row["resume_text"],
+                "job_description": pos_job["description"],
+                "label": 1.0,
+                "resume_category": category,
+                "pair_type": "positive",
+            }
+        )
 
         # Sample hard negatives: jobs that do NOT match this category
         negative_jobs = [
-            j for j in jobs_list
+            j
+            for j in jobs_list
             if not any(kw in j["description"].lower() for kw in keywords)
         ]
 
@@ -336,23 +412,28 @@ def build_training_pairs(
         n_neg = min(neg_ratio, len(negative_jobs))
         neg_indices = rng.choice(len(negative_jobs), size=n_neg, replace=False)
         for idx in neg_indices:
-            pairs.append({
-                "resume_id": resume_row["id"],
-                "resume_text": resume_row["resume_text"],
-                "job_description": negative_jobs[idx]["description"],
-                "label": 0.0,
-                "resume_category": category,
-                "pair_type": "negative",
-            })
+            pairs.append(
+                {
+                    "resume_id": resume_row["id"],
+                    "resume_text": resume_row["resume_text"],
+                    "job_description": negative_jobs[idx]["description"],
+                    "label": 0.0,
+                    "resume_category": category,
+                    "pair_type": "negative",
+                }
+            )
 
     pairs_df = pd.DataFrame(pairs)
     pos_count = (pairs_df["label"] == 1.0).sum()
     neg_count = (pairs_df["label"] == 0.0).sum()
-    logger.info(f"Built {len(pairs_df)} pairs: {pos_count} positive, {neg_count} negative.")
+    logger.info(
+        f"Built {len(pairs_df)} pairs: {pos_count} positive, {neg_count} negative."
+    )
     return pairs_df
 
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
+
 
 def run_preprocessing(
     resume_df: pd.DataFrame | None = None,
@@ -420,10 +501,17 @@ def run_preprocessing(
 
     # ── Step 5: Train/val/test split ──────────────────────────────────────────
     from sklearn.model_selection import train_test_split
-    train_df, temp_df = train_test_split(pairs_df, test_size=0.20, random_state=42, stratify=pairs_df["label"])
-    val_df, test_df = train_test_split(temp_df, test_size=0.50, random_state=42, stratify=temp_df["label"])
 
-    logger.info(f"Split → train: {len(train_df)}, val: {len(val_df)}, test: {len(test_df)}")
+    train_df, temp_df = train_test_split(
+        pairs_df, test_size=0.20, random_state=42, stratify=pairs_df["label"]
+    )
+    val_df, test_df = train_test_split(
+        temp_df, test_size=0.50, random_state=42, stratify=temp_df["label"]
+    )
+
+    logger.info(
+        f"Split → train: {len(train_df)}, val: {len(val_df)}, test: {len(test_df)}"
+    )
 
     # ── Step 6: Save outputs ──────────────────────────────────────────────────
     resume_out = PROCESSED_DIR / "resumes_processed.csv"
@@ -445,15 +533,17 @@ def run_preprocessing(
         mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
         mlflow.set_experiment(MLFLOW_EXPERIMENT)
         with mlflow.start_run(run_name="data-preprocessing"):
-            mlflow.log_metrics({
-                "total_resumes_processed": float(len(resume_df)),
-                "total_jobs_processed": float(len(jobs_df)),
-                "total_pairs": float(len(pairs_df)),
-                "train_pairs": float(len(train_df)),
-                "val_pairs": float(len(val_df)),
-                "test_pairs": float(len(test_df)),
-                "positive_pair_ratio": float((pairs_df["label"] == 1.0).mean()),
-            })
+            mlflow.log_metrics(
+                {
+                    "total_resumes_processed": float(len(resume_df)),
+                    "total_jobs_processed": float(len(jobs_df)),
+                    "total_pairs": float(len(pairs_df)),
+                    "train_pairs": float(len(train_df)),
+                    "val_pairs": float(len(val_df)),
+                    "test_pairs": float(len(test_df)),
+                    "positive_pair_ratio": float((pairs_df["label"] == 1.0).mean()),
+                }
+            )
             mlflow.set_tag("stage", "preprocessing")
             logger.success("Preprocessing stats logged to MLflow.")
     except Exception as e:

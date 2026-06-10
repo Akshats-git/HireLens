@@ -31,6 +31,7 @@ def extract_text(file_bytes: bytes, filename: str = "") -> str:
 def _try_pdfplumber(file_bytes: bytes) -> str:
     try:
         import pdfplumber
+
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
             pages = [page.extract_text() or "" for page in pdf.pages]
         return "\n".join(pages).strip()
@@ -41,6 +42,7 @@ def _try_pdfplumber(file_bytes: bytes) -> str:
 def _try_pymupdf(file_bytes: bytes) -> str:
     try:
         import fitz  # PyMuPDF
+
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         pages = [doc[i].get_text() for i in range(doc.page_count)]
         doc.close()

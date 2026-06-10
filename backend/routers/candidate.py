@@ -37,26 +37,34 @@ _ACCEPTED_CONTENT_TYPES = {"application/pdf", "application/octet-stream"}
 )
 async def analyze_resume(
     resume: UploadFile = File(..., description="Candidate resume in PDF format"),
-    job_description: str = Form(..., min_length=50, description="Full job description text"),
+    job_description: str = Form(
+        ..., min_length=50, description="Full job description text"
+    ),
 ) -> AnalyzeResponse:
     t_start = time.perf_counter()
 
     # ── Validate upload ────────────────────────────────────────────────────────
     content_type = (resume.content_type or "").lower()
     filename = resume.filename or "resume.pdf"
-    if content_type not in _ACCEPTED_CONTENT_TYPES and not filename.lower().endswith(".pdf"):
+    if content_type not in _ACCEPTED_CONTENT_TYPES and not filename.lower().endswith(
+        ".pdf"
+    ):
         raise HTTPException(status_code=415, detail="Only PDF files are accepted.")
 
     file_bytes = await resume.read()
     if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
     if len(file_bytes) > _MAX_FILE_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds the 10 MB size limit.")
+        raise HTTPException(
+            status_code=413, detail="File exceeds the 10 MB size limit."
+        )
 
     # ── Extract text from PDF ──────────────────────────────────────────────────
     loop = asyncio.get_event_loop()
     try:
-        resume_text: str = await loop.run_in_executor(None, extract_text, file_bytes, filename)
+        resume_text: str = await loop.run_in_executor(
+            None, extract_text, file_bytes, filename
+        )
     except Exception as exc:
         logger.error(f"PDF extraction error [{filename}]: {exc}")
         raise HTTPException(status_code=422, detail=f"Could not parse PDF: {exc}")
@@ -65,7 +73,7 @@ async def analyze_resume(
         raise HTTPException(
             status_code=422,
             detail="Could not extract sufficient text from the PDF. "
-                   "Ensure the file is not scanned-only (image-based).",
+            "Ensure the file is not scanned-only (image-based).",
         )
 
     # ── Cache lookup ───────────────────────────────────────────────────────────
@@ -80,7 +88,9 @@ async def analyze_resume(
     # ── ML inference ───────────────────────────────────────────────────────────
     ml = get_ml_service()
     try:
-        result: dict = await loop.run_in_executor(None, ml.analyze, resume_text, job_description)
+        result: dict = await loop.run_in_executor(
+            None, ml.analyze, resume_text, job_description
+        )
     except Exception as exc:
         logger.error(f"ML analysis failed [{filename}]: {exc}")
         raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}")
@@ -88,11 +98,14 @@ async def analyze_resume(
     cache.set(cache_key, result)
 
     elapsed_ms = (time.perf_counter() - t_start) * 1000
-    logger.info(f"analyze | {filename} | score={result['score_pct']:.1f} | {elapsed_ms:.0f}ms")
+    logger.info(
+        f"analyze | {filename} | score={result['score_pct']:.1f} | {elapsed_ms:.0f}ms"
+    )
     return _to_response(result, elapsed_ms)
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
+
 
 def _to_response(result: dict, elapsed_ms: float) -> AnalyzeResponse:
     bd = result["breakdown"]

@@ -31,15 +31,20 @@ _CONFIG_PATH = PROJECT_ROOT / "configs" / "config.yaml"
 _TAXONOMY_PATH = PROJECT_ROOT / "data" / "skills_taxonomy.json"
 
 logger.remove()
-logger.add(sys.stderr, level="INFO",
-           format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}")
+logger.add(
+    sys.stderr,
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}",
+)
 
 
 # ── Data structures ───────────────────────────────────────────────────────────
 
+
 @dataclass
 class ExtractionResult:
     """Structured output from NER extraction."""
+
     technical_skills: list[str] = field(default_factory=list)
     soft_skills: list[str] = field(default_factory=list)
     experience_years: float = 0.0
@@ -67,12 +72,20 @@ class ExtractionResult:
 # ── Education patterns ────────────────────────────────────────────────────────
 
 _EDU_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("phd",       re.compile(r"\b(ph\.?d|doctorate|doctoral)\b", re.I)),
-    ("masters",   re.compile(r"\b(m\.?s\.?|m\.?eng\.?|m\.?b\.?a\.?|master(?:\'?s)?)\b", re.I)),
-    ("bachelors", re.compile(r"\b(b\.?s\.?|b\.?e\.?|b\.?tech\.?|bachelor(?:\'?s)?|undergraduate)\b", re.I)),
+    ("phd", re.compile(r"\b(ph\.?d|doctorate|doctoral)\b", re.I)),
+    (
+        "masters",
+        re.compile(r"\b(m\.?s\.?|m\.?eng\.?|m\.?b\.?a\.?|master(?:\'?s)?)\b", re.I),
+    ),
+    (
+        "bachelors",
+        re.compile(
+            r"\b(b\.?s\.?|b\.?e\.?|b\.?tech\.?|bachelor(?:\'?s)?|undergraduate)\b", re.I
+        ),
+    ),
     ("associate", re.compile(r"\b(associate(?:\'?s)?|a\.?s\.?|a\.?a\.?)\b", re.I)),
-    ("diploma",   re.compile(r"\b(diploma|certificate program)\b", re.I)),
-    ("bootcamp",  re.compile(r"\b(bootcamp|coding school|nanodegree)\b", re.I)),
+    ("diploma", re.compile(r"\b(diploma|certificate program)\b", re.I)),
+    ("bootcamp", re.compile(r"\b(bootcamp|coding school|nanodegree)\b", re.I)),
 ]
 
 # Years of experience patterns: "5 years", "5+ years", "3-5 years", "over 10 years"
@@ -89,6 +102,7 @@ _TITLE_CONTEXT = re.compile(
 
 
 # ── Taxonomy loader ───────────────────────────────────────────────────────────
+
 
 def _load_taxonomy() -> tuple[set[str], set[str], set[str]]:
     """
@@ -112,10 +126,12 @@ def _load_taxonomy() -> tuple[set[str], set[str], set[str]]:
 
 # ── Aho-Corasick multi-string search (optional speedup) ──────────────────────
 
+
 def _build_automaton(skills: set[str]) -> Any | None:
     """Build an Aho-Corasick automaton if the library is available."""
     try:
         import ahocorasick
+
         A = ahocorasick.Automaton()
         for skill in skills:
             A.add_word(skill, skill)
@@ -136,7 +152,9 @@ def _search_with_automaton(text: str, automaton: Any) -> list[str]:
         end = start + len(skill)
         before = text_lower[start - 1] if start > 0 else " "
         after = text_lower[end] if end < len(text_lower) else " "
-        if not (before.isalnum() or before == "-") and not (after.isalnum() or after == "-"):
+        if not (before.isalnum() or before == "-") and not (
+            after.isalnum() or after == "-"
+        ):
             found.append(skill)
     return found
 
@@ -156,6 +174,7 @@ def _search_with_set(text: str, skills: set[str]) -> list[str]:
 
 
 # ── spaCy loader ──────────────────────────────────────────────────────────────
+
 
 def _load_spacy(config: dict) -> Language:
     """Load spaCy model with transformer fallback to sm."""
@@ -178,6 +197,7 @@ def _load_spacy(config: dict) -> Language:
 
 
 # ── Main extractor ────────────────────────────────────────────────────────────
+
 
 class NERExtractor:
     """
@@ -206,11 +226,15 @@ class NERExtractor:
         if self._tech_automaton:
             logger.debug("Using Aho-Corasick for skill matching.")
         else:
-            logger.debug("Using naive skill matching (pip install pyahocorasick for speedup).")
+            logger.debug(
+                "Using naive skill matching (pip install pyahocorasick for speedup)."
+            )
 
         self._nlp = _load_spacy(self._config)
 
-    def _match_skills(self, text: str, taxonomy: set[str], automaton: Any | None) -> list[str]:
+    def _match_skills(
+        self, text: str, taxonomy: set[str], automaton: Any | None
+    ) -> list[str]:
         if automaton:
             return _search_with_automaton(text, automaton)
         return _search_with_set(text, taxonomy)
@@ -278,10 +302,7 @@ class NERExtractor:
         certs = self._match_skills(text, self._certs, self._cert_automaton)
 
         # Raw NER entities
-        raw_entities = [
-            {"text": ent.text, "label": ent.label_}
-            for ent in doc.ents
-        ]
+        raw_entities = [{"text": ent.text, "label": ent.label_} for ent in doc.ents]
 
         return ExtractionResult(
             technical_skills=sorted(set(technical)),
@@ -293,7 +314,9 @@ class NERExtractor:
             raw_entities=raw_entities,
         )
 
-    def extract_batch(self, texts: list[str], batch_size: int = 32) -> list[ExtractionResult]:
+    def extract_batch(
+        self, texts: list[str], batch_size: int = 32
+    ) -> list[ExtractionResult]:
         """
         Extract from a list of texts using spaCy's pipe() for efficiency.
 
@@ -307,26 +330,32 @@ class NERExtractor:
         from tqdm import tqdm
 
         results = []
-        docs = list(self._nlp.pipe(
-            [t[:100_000] for t in texts],
-            batch_size=batch_size,
-        ))
+        docs = list(
+            self._nlp.pipe(
+                [t[:100_000] for t in texts],
+                batch_size=batch_size,
+            )
+        )
 
-        for text, doc in tqdm(zip(texts, docs), total=len(texts), desc="NER extraction"):
+        for text, doc in tqdm(
+            zip(texts, docs), total=len(texts), desc="NER extraction"
+        ):
             technical = self._match_skills(text, self._technical, self._tech_automaton)
             soft = self._match_skills(text, self._soft, self._soft_automaton)
             certs = self._match_skills(text, self._certs, self._cert_automaton)
             raw_entities = [{"text": ent.text, "label": ent.label_} for ent in doc.ents]
 
-            results.append(ExtractionResult(
-                technical_skills=sorted(set(technical)),
-                soft_skills=sorted(set(soft)),
-                experience_years=self._extract_experience_years(text),
-                education_level=self._extract_education(text),
-                job_titles=self._extract_job_titles(doc),
-                certifications=sorted(set(certs)),
-                raw_entities=raw_entities,
-            ))
+            results.append(
+                ExtractionResult(
+                    technical_skills=sorted(set(technical)),
+                    soft_skills=sorted(set(soft)),
+                    experience_years=self._extract_experience_years(text),
+                    education_level=self._extract_education(text),
+                    job_titles=self._extract_job_titles(doc),
+                    certifications=sorted(set(certs)),
+                    raw_entities=raw_entities,
+                )
+            )
 
         return results
 

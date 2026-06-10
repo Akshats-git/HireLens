@@ -23,8 +23,8 @@ from mlflow import MlflowClient
 from loguru import logger
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EVAL_REPORT  = PROJECT_ROOT / "logs" / "evaluation_report.json"
-MODEL_DIR    = PROJECT_ROOT / "models" / "fine_tuned" / "hirelens_matcher"
+EVAL_REPORT = PROJECT_ROOT / "logs" / "evaluation_report.json"
+MODEL_DIR = PROJECT_ROOT / "models" / "fine_tuned" / "hirelens_matcher"
 
 from registry.config import (
     EXPERIMENT_NAME,
@@ -36,15 +36,19 @@ from registry.config import (
 )
 
 logger.remove()
-logger.add(sys.stderr, level="INFO",
-           format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {message}")
+logger.add(
+    sys.stderr,
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {message}",
+)
 
 # Aliases used instead of deprecated lifecycle stages
-ALIAS_STAGING    = "staging"
+ALIAS_STAGING = "staging"
 ALIAS_PRODUCTION = "production"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _get_run_metrics(client: MlflowClient, run_id: str) -> dict:
     return client.get_run(run_id).data.metrics
@@ -75,10 +79,13 @@ def _ensure_registered_model(client: MlflowClient) -> None:
 
 # ── Core actions ──────────────────────────────────────────────────────────────
 
+
 def register_run(client: MlflowClient, run_id: str) -> str:
     """Register a run's model artifact and alias it as 'staging'. Returns version string."""
     model_uri = f"runs:/{run_id}/model"
-    version_info = mlflow.register_model(model_uri=model_uri, name=REGISTERED_MODEL_NAME)
+    version_info = mlflow.register_model(
+        model_uri=model_uri, name=REGISTERED_MODEL_NAME
+    )
     version = version_info.version
 
     client.set_registered_model_alias(REGISTERED_MODEL_NAME, ALIAS_STAGING, version)
@@ -90,9 +97,13 @@ def promote_to_production(client: MlflowClient, version: str) -> None:
     """Alias a version as 'production' (moves the alias, old version keeps its other aliases)."""
     # Remove production alias from whatever currently holds it
     try:
-        current = client.get_model_version_by_alias(REGISTERED_MODEL_NAME, ALIAS_PRODUCTION)
+        current = client.get_model_version_by_alias(
+            REGISTERED_MODEL_NAME, ALIAS_PRODUCTION
+        )
         client.delete_registered_model_alias(REGISTERED_MODEL_NAME, ALIAS_PRODUCTION)
-        logger.info(f"Removed '{ALIAS_PRODUCTION}' alias from version {current.version}")
+        logger.info(
+            f"Removed '{ALIAS_PRODUCTION}' alias from version {current.version}"
+        )
     except mlflow.exceptions.MlflowException:
         pass  # No current production version
 
@@ -116,7 +127,9 @@ def list_versions(client: MlflowClient) -> None:
     print(f"\n{'Ver':<5} {'Aliases':<22} {'Run ID':<32} {'Created':<20}")
     print("-" * 82)
     for v in sorted(versions, key=lambda x: int(x.version)):
-        ts = datetime.datetime.fromtimestamp(v.creation_timestamp // 1000).strftime("%Y-%m-%d %H:%M")
+        ts = datetime.datetime.fromtimestamp(v.creation_timestamp // 1000).strftime(
+            "%Y-%m-%d %H:%M"
+        )
         aliases = [a for a, ver in alias_map.items() if ver == str(v.version)]
         alias_str = ", ".join(aliases) if aliases else "-"
         print(f"{v.version:<5} {alias_str:<22} {v.run_id:<32} {ts}")
@@ -140,24 +153,26 @@ def seed_run_from_eval_report() -> str:
         report = json.load(f)
 
     retrieval = report.get("retrieval", {})
-    ner       = report.get("ner", {})
+    ner = report.get("ner", {})
 
     flat_metrics = {
-        "precision_at_1":  retrieval.get("precision_at_1", 0.0),
-        "precision_at_3":  retrieval.get("precision_at_3", 0.0),
-        "precision_at_5":  retrieval.get("precision_at_5", 0.0),
-        "ndcg_at_10":      retrieval.get("ndcg_at_10", 0.0),
-        "auc_roc":         retrieval.get("auc_roc", 0.0),
-        "mrr":             retrieval.get("mrr", 0.0),
-        "pearson_cosine":  retrieval.get("pearson_cosine", 0.0),
+        "precision_at_1": retrieval.get("precision_at_1", 0.0),
+        "precision_at_3": retrieval.get("precision_at_3", 0.0),
+        "precision_at_5": retrieval.get("precision_at_5", 0.0),
+        "ndcg_at_10": retrieval.get("ndcg_at_10", 0.0),
+        "auc_roc": retrieval.get("auc_roc", 0.0),
+        "mrr": retrieval.get("mrr", 0.0),
+        "pearson_cosine": retrieval.get("pearson_cosine", 0.0),
         "spearman_cosine": retrieval.get("spearman_cosine", 0.0),
-        "ner_f1":          ner.get("f1", 0.0),
-        "ner_precision":   ner.get("precision", 0.0),
-        "ner_recall":      ner.get("recall", 0.0),
+        "ner_f1": ner.get("f1", 0.0),
+        "ner_precision": ner.get("precision", 0.0),
+        "ner_recall": ner.get("recall", 0.0),
     }
 
     exp_id = get_or_create_experiment()
-    with mlflow.start_run(experiment_id=exp_id, run_name="seeded-from-eval-report") as run:
+    with mlflow.start_run(
+        experiment_id=exp_id, run_name="seeded-from-eval-report"
+    ) as run:
         mlflow.log_metrics(flat_metrics)
         mlflow.log_param("model_path", str(MODEL_DIR))
         mlflow.log_param("source", "seeded-from-existing-eval-report")
@@ -208,17 +223,31 @@ def find_best_training_run(client: MlflowClient) -> str | None:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="HireLens MLflow model registry manager")
+    parser = argparse.ArgumentParser(
+        description="HireLens MLflow model registry manager"
+    )
     parser.add_argument("--run-id", default=None, help="MLflow run ID to register")
-    parser.add_argument("--list", action="store_true", help="List all registered model versions")
-    parser.add_argument("--promote-version", default=None,
-                        help="Directly promote a version number to production alias")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Check thresholds but do not register or promote")
-    parser.add_argument("--seed-from-eval", action="store_true",
-                        help="Create an MLflow run from logs/evaluation_report.json + local model, "
-                             "then register and promote if thresholds pass")
+    parser.add_argument(
+        "--list", action="store_true", help="List all registered model versions"
+    )
+    parser.add_argument(
+        "--promote-version",
+        default=None,
+        help="Directly promote a version number to production alias",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Check thresholds but do not register or promote",
+    )
+    parser.add_argument(
+        "--seed-from-eval",
+        action="store_true",
+        help="Create an MLflow run from logs/evaluation_report.json + local model, "
+        "then register and promote if thresholds pass",
+    )
     args = parser.parse_args()
 
     mlflow.set_tracking_uri(get_tracking_uri())
@@ -255,7 +284,9 @@ def main() -> None:
             logger.warning(f)
         if not args.dry_run:
             version = register_run(client, run_id)
-            logger.info(f"Registered to '{ALIAS_STAGING}' (version {version}) for manual review.")
+            logger.info(
+                f"Registered to '{ALIAS_STAGING}' (version {version}) for manual review."
+            )
         sys.exit(0)
 
     logger.success("All thresholds passed ✓")

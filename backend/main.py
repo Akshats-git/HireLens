@@ -24,6 +24,7 @@ from .services.ml_service import get_ml_service
 
 # ── Lifespan ───────────────────────────────────────────────────────────────────
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ml = get_ml_service()
@@ -50,7 +51,9 @@ app = FastAPI(
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
 
-_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
+_origins = os.getenv(
+    "CORS_ORIGINS", "http://localhost:3000,http://localhost:5173"
+).split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in _origins],
@@ -66,6 +69,7 @@ app.include_router(recruiter.router)
 
 
 # ── System endpoints ───────────────────────────────────────────────────────────
+
 
 @app.get("/health", tags=["system"], summary="Health check")
 async def health() -> dict:

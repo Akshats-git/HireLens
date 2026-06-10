@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 # ── Redis probe ────────────────────────────────────────────────────────────────
 
+
 def _build_redis_client(url: str):
     try:
         import redis
@@ -27,6 +28,7 @@ def _build_redis_client(url: str):
 
 
 # ── In-memory TTL store ────────────────────────────────────────────────────────
+
 
 class _MemoryStore:
     def __init__(self) -> None:
@@ -58,6 +60,7 @@ class _MemoryStore:
 
 # ── Public interface ───────────────────────────────────────────────────────────
 
+
 class CacheService:
     """
     Unified cache layer: Redis when available, in-memory otherwise.
@@ -66,14 +69,19 @@ class CacheService:
     manage key collisions.
     """
 
-    def __init__(self, redis_url: Optional[str] = None, default_ttl: int = 3600) -> None:
+    def __init__(
+        self, redis_url: Optional[str] = None, default_ttl: int = 3600
+    ) -> None:
         self._ttl = default_ttl
         url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self._redis = _build_redis_client(url)
         self._memory = _MemoryStore()
         backend = "Redis" if self._redis else "in-memory"
         from loguru import logger
-        logger.info(f"CacheService initialised with {backend} backend (TTL={default_ttl}s)")
+
+        logger.info(
+            f"CacheService initialised with {backend} backend (TTL={default_ttl}s)"
+        )
 
     # ── Low-level ops ──────────────────────────────────────────────────────────
 

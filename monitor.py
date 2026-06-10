@@ -29,25 +29,32 @@ import yaml
 from loguru import logger
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-EVAL_REPORT  = PROJECT_ROOT / "logs" / "evaluation_report.json"
-PARAMS_FILE  = PROJECT_ROOT / "params.yaml"
-ALERT_LOG    = PROJECT_ROOT / "logs" / "monitor_alerts.log"
+EVAL_REPORT = PROJECT_ROOT / "logs" / "evaluation_report.json"
+PARAMS_FILE = PROJECT_ROOT / "params.yaml"
+ALERT_LOG = PROJECT_ROOT / "logs" / "monitor_alerts.log"
 
 logger.remove()
-logger.add(sys.stderr, level="INFO",
-           format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {message}")
+logger.add(
+    sys.stderr,
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {message}",
+)
 logger.add(ALERT_LOG, level="WARNING", rotation="20 MB", retention="60 days")
 
 
 # ── Params ────────────────────────────────────────────────────────────────────
 
+
 def _load_thresholds() -> dict:
     with open(PARAMS_FILE) as f:
         params = yaml.safe_load(f)
-    return params.get("monitor", {}).get("retraining_threshold", {
-        "precision_at_1": 0.85,
-        "auc_roc": 0.78,
-    })
+    return params.get("monitor", {}).get(
+        "retraining_threshold",
+        {
+            "precision_at_1": 0.85,
+            "auc_roc": 0.78,
+        },
+    )
 
 
 def _check_interval_hours() -> float:
@@ -58,6 +65,7 @@ def _check_interval_hours() -> float:
 
 # ── Report reading ────────────────────────────────────────────────────────────
 
+
 def _load_eval_report() -> dict:
     if not EVAL_REPORT.exists():
         raise FileNotFoundError(f"Eval report not found: {EVAL_REPORT}")
@@ -67,17 +75,18 @@ def _load_eval_report() -> dict:
 
 def _extract_key_metrics(report: dict) -> dict:
     retrieval = report.get("retrieval", {})
-    ner       = report.get("ner", {})
+    ner = report.get("ner", {})
     return {
         "precision_at_1": retrieval.get("precision_at_1", 0.0),
-        "ndcg_at_10":     retrieval.get("ndcg_at_10", 0.0),
-        "auc_roc":        retrieval.get("auc_roc", 0.0),
-        "mrr":            retrieval.get("mrr", 0.0),
-        "ner_f1":         ner.get("f1", 0.0),
+        "ndcg_at_10": retrieval.get("ndcg_at_10", 0.0),
+        "auc_roc": retrieval.get("auc_roc", 0.0),
+        "mrr": retrieval.get("mrr", 0.0),
+        "ner_f1": ner.get("f1", 0.0),
     }
 
 
 # ── Threshold check ───────────────────────────────────────────────────────────
+
 
 def check_metrics(metrics: dict, thresholds: dict) -> list[tuple[str, float, float]]:
     """Return list of (metric, actual, threshold) for every failing metric."""
@@ -90,9 +99,11 @@ def check_metrics(metrics: dict, thresholds: dict) -> list[tuple[str, float, flo
 
 # ── CloudWatch ────────────────────────────────────────────────────────────────
 
+
 def _emit_cloudwatch(metrics: dict, failures: list) -> None:
     try:
         import boto3
+
         cw = boto3.client("cloudwatch")
         metric_data = [
             {
@@ -104,12 +115,14 @@ def _emit_cloudwatch(metrics: dict, failures: list) -> None:
             for name, value in metrics.items()
         ]
         if failures:
-            metric_data.append({
-                "MetricName": "RetrainingTriggered",
-                "Value": 1.0,
-                "Unit": "Count",
-                "Dimensions": [{"Name": "Model", "Value": "hirelens-matcher"}],
-            })
+            metric_data.append(
+                {
+                    "MetricName": "RetrainingTriggered",
+                    "Value": 1.0,
+                    "Unit": "Count",
+                    "Dimensions": [{"Name": "Model", "Value": "hirelens-matcher"}],
+                }
+            )
         cw.put_metric_data(Namespace="HireLens/ML", MetricData=metric_data)
         logger.info("Metrics emitted to CloudWatch (HireLens/ML namespace)")
     except ImportError:
@@ -119,6 +132,7 @@ def _emit_cloudwatch(metrics: dict, failures: list) -> None:
 
 
 # ── Retraining ────────────────────────────────────────────────────────────────
+
 
 def trigger_retraining() -> bool:
     """Run `dvc repro train evaluate` and return True on success."""
@@ -134,6 +148,7 @@ def trigger_retraining() -> bool:
 
 
 # ── Core check cycle ──────────────────────────────────────────────────────────
+
 
 def run_check(force_retrain: bool = False) -> bool:
     """
@@ -165,8 +180,9 @@ def run_check(force_retrain: bool = False) -> bool:
         return False
 
     if failures:
-        msg = f"Metric regression detected — triggering retraining: " + \
-              ", ".join(f"{n}={a:.4f}<{t}" for n, a, t in failures)
+        msg = f"Metric regression detected — triggering retraining: " + ", ".join(
+            f"{n}={a:.4f}<{t}" for n, a, t in failures
+        )
         logger.warning(msg)
 
     return trigger_retraining()
@@ -174,12 +190,17 @@ def run_check(force_retrain: bool = False) -> bool:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="HireLens retraining monitor")
-    parser.add_argument("--daemon", action="store_true",
-                        help="Run as a daemon — check every N hours")
-    parser.add_argument("--force-retrain", action="store_true",
-                        help="Trigger retraining regardless of metric values")
+    parser.add_argument(
+        "--daemon", action="store_true", help="Run as a daemon — check every N hours"
+    )
+    parser.add_argument(
+        "--force-retrain",
+        action="store_true",
+        help="Trigger retraining regardless of metric values",
+    )
     args = parser.parse_args()
 
     if args.daemon:

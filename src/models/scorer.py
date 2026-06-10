@@ -26,8 +26,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _CONFIG_PATH = PROJECT_ROOT / "configs" / "config.yaml"
 
 logger.remove()
-logger.add(sys.stderr, level="INFO",
-           format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}")
+logger.add(
+    sys.stderr,
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}",
+)
 
 
 def _load_config() -> dict:
@@ -37,17 +40,33 @@ def _load_config() -> dict:
 
 # ── Degree hierarchy ──────────────────────────────────────────────────────────
 
-_DEGREE_ORDER = ["none", "bootcamp", "certification", "associate", "diploma",
-                 "bachelors", "masters", "phd"]
+_DEGREE_ORDER = [
+    "none",
+    "bootcamp",
+    "certification",
+    "associate",
+    "diploma",
+    "bachelors",
+    "masters",
+    "phd",
+]
 _DEGREE_RANK = {d: i for i, d in enumerate(_DEGREE_ORDER)}
 
 _EDU_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("phd",       re.compile(r"\b(ph\.?d|doctorate|doctoral)\b", re.I)),
-    ("masters",   re.compile(r"\b(m\.?s\.?|m\.?eng\.?|m\.?b\.?a\.?|master(?:\'?s)?)\b", re.I)),
-    ("bachelors", re.compile(r"\b(b\.?s\.?|b\.?e\.?|b\.?tech\.?|bachelor(?:\'?s)?|undergraduate)\b", re.I)),
+    ("phd", re.compile(r"\b(ph\.?d|doctorate|doctoral)\b", re.I)),
+    (
+        "masters",
+        re.compile(r"\b(m\.?s\.?|m\.?eng\.?|m\.?b\.?a\.?|master(?:\'?s)?)\b", re.I),
+    ),
+    (
+        "bachelors",
+        re.compile(
+            r"\b(b\.?s\.?|b\.?e\.?|b\.?tech\.?|bachelor(?:\'?s)?|undergraduate)\b", re.I
+        ),
+    ),
     ("associate", re.compile(r"\b(associate(?:\'?s)?)\b", re.I)),
-    ("diploma",   re.compile(r"\b(diploma)\b", re.I)),
-    ("bootcamp",  re.compile(r"\b(bootcamp|nanodegree|coding school)\b", re.I)),
+    ("diploma", re.compile(r"\b(diploma)\b", re.I)),
+    ("bootcamp", re.compile(r"\b(bootcamp|nanodegree|coding school)\b", re.I)),
     ("certification", re.compile(r"\b(certificate|certified|certification)\b", re.I)),
 ]
 
@@ -58,24 +77,86 @@ _EXP_PATTERN = re.compile(
 
 # Simple stopwords for TF-IDF
 _STOPWORDS = {
-    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of",
-    "with", "by", "from", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could", "should",
-    "may", "might", "shall", "can", "need", "dare", "ought", "used",
-    "we", "you", "i", "he", "she", "it", "they", "them", "their", "our", "your",
-    "this", "that", "these", "those", "what", "which", "who", "whom",
-    "not", "no", "nor", "so", "yet", "both", "either", "neither",
+    "a",
+    "an",
+    "the",
+    "and",
+    "or",
+    "but",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "of",
+    "with",
+    "by",
+    "from",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "shall",
+    "can",
+    "need",
+    "dare",
+    "ought",
+    "used",
+    "we",
+    "you",
+    "i",
+    "he",
+    "she",
+    "it",
+    "they",
+    "them",
+    "their",
+    "our",
+    "your",
+    "this",
+    "that",
+    "these",
+    "those",
+    "what",
+    "which",
+    "who",
+    "whom",
+    "not",
+    "no",
+    "nor",
+    "so",
+    "yet",
+    "both",
+    "either",
+    "neither",
 }
 
 
 # ── Output dataclass ──────────────────────────────────────────────────────────
 
+
 @dataclass
 class MatchResult:
     """Complete match result with scores, label, and suggestions."""
-    final_score: float                          # 0.0–1.0
-    score_pct: float                            # 0–100 (display)
-    label: str                                  # Excellent / Good / Fair / Poor
+
+    final_score: float  # 0.0–1.0
+    score_pct: float  # 0–100 (display)
+    label: str  # Excellent / Good / Fair / Poor
     skills_match: float
     experience_relevance: float
     education_fit: float
@@ -102,6 +183,7 @@ class MatchResult:
 
 
 # ── Individual scorers ────────────────────────────────────────────────────────
+
 
 def _tokenize(text: str) -> list[str]:
     """Lowercase word tokenization, removing stopwords and short tokens."""
@@ -179,10 +261,9 @@ def score_experience_relevance(
     # Semantic similarity of full texts (experience dominates resume length)
     semantic = 0.5
     if resume_emb is not None and jd_emb is not None:
-        semantic = float(np.clip(np.dot(
-            np.atleast_1d(resume_emb),
-            np.atleast_1d(jd_emb)
-        ), 0.0, 1.0))
+        semantic = float(
+            np.clip(np.dot(np.atleast_1d(resume_emb), np.atleast_1d(jd_emb)), 0.0, 1.0)
+        )
 
     # Years-of-experience bonus/penalty
     resume_years_matches = _EXP_PATTERN.findall(resume_text)
@@ -243,7 +324,9 @@ def score_education_fit(resume_text: str, jd_text: str) -> float:
         return 0.2
 
 
-def _compute_tfidf_weights(tokens: list[str], corpus_tokens: list[str]) -> dict[str, float]:
+def _compute_tfidf_weights(
+    tokens: list[str], corpus_tokens: list[str]
+) -> dict[str, float]:
     """
     Compute simplified TF-IDF weights for tokens in a two-document corpus.
 
@@ -312,6 +395,7 @@ def score_keyword_alignment(resume_text: str, jd_text: str) -> float:
 
 # ── Suggestion generator ──────────────────────────────────────────────────────
 
+
 def generate_suggestions(result: "MatchResult", jd_text: str) -> list[str]:
     """
     Generate actionable improvement suggestions based on score gaps.
@@ -370,6 +454,7 @@ def generate_suggestions(result: "MatchResult", jd_text: str) -> list[str]:
 
 # ── Main scorer ───────────────────────────────────────────────────────────────
 
+
 class MatchScorer:
     """
     Computes a 4-component match score between a resume and a job description.
@@ -427,18 +512,22 @@ class MatchScorer:
         if resume_emb is None or jd_emb is None:
             try:
                 from src.features.embeddings import get_model
+
                 model = get_model()
                 if resume_emb is None:
                     resume_emb = model.encode(resume_text)
                 if jd_emb is None:
                     jd_emb = model.encode(jd_text)
             except Exception as e:
-                logger.warning(f"Embedding unavailable, falling back to text-only scoring: {e}")
+                logger.warning(
+                    f"Embedding unavailable, falling back to text-only scoring: {e}"
+                )
 
         # Lazily extract skills if not provided
         if resume_skills is None or jd_skills is None:
             try:
                 from src.features.ner import get_extractor
+
                 extractor = get_extractor()
                 if resume_skills is None:
                     resume_skills = set(extractor.extract(resume_text).technical_skills)
@@ -459,10 +548,10 @@ class MatchScorer:
 
         # Weighted combination
         final = (
-            self.w_skills * s_skills +
-            self.w_exp * s_exp +
-            self.w_edu * s_edu +
-            self.w_kw * s_kw
+            self.w_skills * s_skills
+            + self.w_exp * s_exp
+            + self.w_edu * s_edu
+            + self.w_kw * s_kw
         )
         final = float(np.clip(final, 0.0, 1.0))
         score_pct = round(final * 100, 1)

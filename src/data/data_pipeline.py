@@ -26,9 +26,17 @@ from loguru import logger
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 logger.remove()
-logger.add(sys.stderr, level="INFO",
-           format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}")
-logger.add(PROJECT_ROOT / "logs" / "pipeline.log", rotation="100 MB", retention="30 days", level="DEBUG")
+logger.add(
+    sys.stderr,
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}",
+)
+logger.add(
+    PROJECT_ROOT / "logs" / "pipeline.log",
+    rotation="100 MB",
+    retention="30 days",
+    level="DEBUG",
+)
 
 
 def _section(title: str) -> None:
@@ -43,6 +51,7 @@ def stage_ingest() -> tuple:
     """Run Stage 1: data ingestion."""
     _section("Stage 1 / 3 — Data Ingestion")
     from src.data.ingestion import run_ingestion
+
     t0 = time.perf_counter()
     resume_df, jobs_df = run_ingestion()
     elapsed = time.perf_counter() - t0
@@ -50,10 +59,22 @@ def stage_ingest() -> tuple:
     # Write DVC-tracked metric file
     dist = {
         "resume_total_rows": int(len(resume_df)),
-        "resume_unique_categories": int(resume_df["category"].nunique()) if "category" in resume_df.columns else 0,
-        "resume_avg_text_length": float(resume_df["resume_text"].str.len().mean()) if "resume_text" in resume_df.columns else 0.0,
+        "resume_unique_categories": (
+            int(resume_df["category"].nunique())
+            if "category" in resume_df.columns
+            else 0
+        ),
+        "resume_avg_text_length": (
+            float(resume_df["resume_text"].str.len().mean())
+            if "resume_text" in resume_df.columns
+            else 0.0
+        ),
         "jobs_total_rows": int(len(jobs_df)),
-        "jobs_avg_description_length": float(jobs_df["description"].str.len().mean()) if "description" in jobs_df.columns else 0.0,
+        "jobs_avg_description_length": (
+            float(jobs_df["description"].str.len().mean())
+            if "description" in jobs_df.columns
+            else 0.0
+        ),
         "ingestion_elapsed_s": round(elapsed, 2),
     }
     dist_path = PROJECT_ROOT / "logs" / "dataset_distributions.json"
@@ -62,8 +83,10 @@ def stage_ingest() -> tuple:
         json.dump(dist, f, indent=2)
     logger.info(f"Written: {dist_path}")
 
-    logger.success(f"Ingestion complete in {elapsed:.1f}s — "
-                   f"{len(resume_df)} resumes, {len(jobs_df)} jobs.")
+    logger.success(
+        f"Ingestion complete in {elapsed:.1f}s — "
+        f"{len(resume_df)} resumes, {len(jobs_df)} jobs."
+    )
     return resume_df, jobs_df
 
 
@@ -71,10 +94,13 @@ def stage_preprocess(resume_df=None, jobs_df=None) -> object:
     """Run Stage 2: preprocessing and pair construction."""
     _section("Stage 2 / 3 — Preprocessing & Pair Construction")
     from src.data.preprocessing import run_preprocessing
+
     t0 = time.perf_counter()
     pairs_df = run_preprocessing(resume_df=resume_df, jobs_df=jobs_df)
     elapsed = time.perf_counter() - t0
-    logger.success(f"Preprocessing complete in {elapsed:.1f}s — {len(pairs_df)} training pairs.")
+    logger.success(
+        f"Preprocessing complete in {elapsed:.1f}s — {len(pairs_df)} training pairs."
+    )
     return pairs_df
 
 
@@ -82,18 +108,24 @@ def stage_synthetic(n_pairs: int = 500) -> object:
     """Run Stage 3: synthetic evaluation pair generation."""
     _section("Stage 3 / 3 — Synthetic Evaluation Data Generation")
     from src.data.synthetic_gen import run_synthetic_generation
+
     t0 = time.perf_counter()
     synthetic_df = run_synthetic_generation(n_pairs=n_pairs)
     elapsed = time.perf_counter() - t0
-    logger.success(f"Synthetic generation complete in {elapsed:.1f}s — {len(synthetic_df)} pairs.")
+    logger.success(
+        f"Synthetic generation complete in {elapsed:.1f}s — {len(synthetic_df)} pairs."
+    )
     return synthetic_df
 
 
 def log_pipeline_summary(stages_run: list[str], total_elapsed: float) -> None:
     """Log an end-to-end pipeline summary run to MLflow."""
     import os
+
     mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000"))
-    mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT_NAME", "hirelens-resume-matching"))
+    mlflow.set_experiment(
+        os.getenv("MLFLOW_EXPERIMENT_NAME", "hirelens-resume-matching")
+    )
 
     with mlflow.start_run(run_name="data-pipeline-summary"):
         mlflow.log_metric("pipeline_total_seconds", total_elapsed)
@@ -128,9 +160,13 @@ def _verify_outputs() -> None:
     synthetic_path = PROJECT_ROOT / "data/synthetic/synthetic_pairs.csv"
     if synthetic_path.exists():
         size_kb = synthetic_path.stat().st_size / 1024
-        logger.info(f"  ✓  {'data/synthetic/synthetic_pairs.csv':<45} ({size_kb:.1f} KB)  [Synthetic]")
+        logger.info(
+            f"  ✓  {'data/synthetic/synthetic_pairs.csv':<45} ({size_kb:.1f} KB)  [Synthetic]"
+        )
     else:
-        logger.info(f"  -  {'data/synthetic/synthetic_pairs.csv':<45} (skipped or not run)")
+        logger.info(
+            f"  -  {'data/synthetic/synthetic_pairs.csv':<45} (skipped or not run)"
+        )
 
     if all_ok:
         logger.success("All expected outputs present.")
@@ -188,7 +224,9 @@ def run_pipeline(
         _verify_outputs()
 
         logger.info("")
-        logger.success(f"Pipeline finished in {total_elapsed:.1f}s. Stages: {stages_run}")
+        logger.success(
+            f"Pipeline finished in {total_elapsed:.1f}s. Stages: {stages_run}"
+        )
 
     except Exception as e:
         logger.error(f"Pipeline failed during stage execution: {e}")

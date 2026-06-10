@@ -46,6 +46,7 @@ logger.add(
 
 # ── Kaggle helpers ────────────────────────────────────────────────────────────
 
+
 def _check_kaggle_credentials() -> None:
     """Raise EnvironmentError if Kaggle API credentials are not configured.
 
@@ -76,7 +77,9 @@ def _check_kaggle_credentials() -> None:
 def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
     """Run a shell command and raise on non-zero exit."""
     logger.debug(f"Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd or PROJECT_ROOT)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, cwd=cwd or PROJECT_ROOT
+    )
     if result.returncode != 0:
         raise RuntimeError(f"Command failed: {' '.join(cmd)}\nSTDERR: {result.stderr}")
     return result
@@ -96,18 +99,25 @@ def download_kaggle_dataset(dataset_slug: str, dest_dir: Path) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Downloading Kaggle dataset: {dataset_slug} → {dest_dir}")
 
-    _run([
-        "kaggle", "datasets", "download",
-        "--dataset", dataset_slug,
-        "--path", str(dest_dir),
-        "--unzip",
-    ])
+    _run(
+        [
+            "kaggle",
+            "datasets",
+            "download",
+            "--dataset",
+            dataset_slug,
+            "--path",
+            str(dest_dir),
+            "--unzip",
+        ]
+    )
 
     logger.success(f"Dataset {dataset_slug} downloaded to {dest_dir}")
     return dest_dir
 
 
 # ── Dataset loaders ───────────────────────────────────────────────────────────
+
 
 def load_resume_dataset(raw_dir: Path) -> pd.DataFrame:
     """
@@ -134,12 +144,14 @@ def load_resume_dataset(raw_dir: Path) -> pd.DataFrame:
     df = pd.read_csv(csv_path)
 
     # Normalise column names
-    df = df.rename(columns={
-        "ID": "id",
-        "Resume_str": "resume_text",
-        "Resume_html": "resume_html",
-        "Category": "category",
-    })
+    df = df.rename(
+        columns={
+            "ID": "id",
+            "Resume_str": "resume_text",
+            "Resume_html": "resume_html",
+            "Category": "category",
+        }
+    )
 
     # Drop rows with missing text
     before = len(df)
@@ -186,7 +198,9 @@ def load_linkedin_dataset(raw_dir: Path) -> pd.DataFrame:
     df = df[available].copy()
 
     if "description" not in df.columns:
-        raise ValueError("LinkedIn dataset is missing 'description' column. Check dataset version.")
+        raise ValueError(
+            "LinkedIn dataset is missing 'description' column. Check dataset version."
+        )
 
     before = len(df)
     df = df.dropna(subset=["description"])
@@ -198,6 +212,7 @@ def load_linkedin_dataset(raw_dir: Path) -> pd.DataFrame:
 
 
 # ── Statistics helpers ────────────────────────────────────────────────────────
+
 
 def compute_resume_stats(df: pd.DataFrame) -> dict[str, Any]:
     """Compute summary statistics for the resume dataset."""
@@ -236,10 +251,15 @@ def log_stats_to_mlflow(resume_stats: dict, jobs_stats: dict) -> None:
     with mlflow.start_run(run_name="data-ingestion"):
         # Scalar metrics
         scalar_keys = [
-            "resume_total_rows", "resume_unique_categories",
-            "resume_avg_text_length", "resume_min_text_length", "resume_max_text_length",
-            "jobs_total_rows", "jobs_avg_description_length",
-            "jobs_min_description_length", "jobs_max_description_length",
+            "resume_total_rows",
+            "resume_unique_categories",
+            "resume_avg_text_length",
+            "resume_min_text_length",
+            "resume_max_text_length",
+            "jobs_total_rows",
+            "jobs_avg_description_length",
+            "jobs_min_description_length",
+            "jobs_max_description_length",
         ]
         for key in scalar_keys:
             value = resume_stats.get(key) or jobs_stats.get(key)
@@ -248,8 +268,12 @@ def log_stats_to_mlflow(resume_stats: dict, jobs_stats: dict) -> None:
 
         # Distribution as JSON artifact
         distributions = {
-            "resume_category_distribution": resume_stats.get("resume_category_distribution", {}),
-            "jobs_experience_level_distribution": jobs_stats.get("jobs_experience_level_distribution", {}),
+            "resume_category_distribution": resume_stats.get(
+                "resume_category_distribution", {}
+            ),
+            "jobs_experience_level_distribution": jobs_stats.get(
+                "jobs_experience_level_distribution", {}
+            ),
         }
         dist_path = PROJECT_ROOT / "logs" / "dataset_distributions.json"
         dist_path.parent.mkdir(exist_ok=True)
@@ -261,6 +285,7 @@ def log_stats_to_mlflow(resume_stats: dict, jobs_stats: dict) -> None:
 
 
 # ── DVC registration ──────────────────────────────────────────────────────────
+
 
 def register_with_dvc(paths: list[Path]) -> None:
     """
@@ -281,6 +306,7 @@ def register_with_dvc(paths: list[Path]) -> None:
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
+
 
 def run_ingestion() -> tuple[pd.DataFrame, pd.DataFrame]:
     """

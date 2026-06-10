@@ -40,15 +40,31 @@ MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
 MLFLOW_EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT_NAME", "hirelens-resume-matching")
 
 logger.remove()
-logger.add(sys.stderr, level="INFO",
-           format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}")
-logger.add(PROJECT_ROOT / "logs" / "synthetic_gen.log", rotation="50 MB", retention="14 days", level="DEBUG")
+logger.add(
+    sys.stderr,
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}",
+)
+logger.add(
+    PROJECT_ROOT / "logs" / "synthetic_gen.log",
+    rotation="50 MB",
+    retention="14 days",
+    level="DEBUG",
+)
 
 # ── Education degree hierarchy ────────────────────────────────────────────────
 _DEGREE_RANK = {
-    "high school": 1, "diploma": 2, "certificate": 3,
-    "associate": 3, "bachelor": 4, "bachelor's": 4,
-    "master": 5, "master's": 5, "mba": 5, "phd": 6, "doctorate": 6,
+    "high school": 1,
+    "diploma": 2,
+    "certificate": 3,
+    "associate": 3,
+    "bachelor": 4,
+    "bachelor's": 4,
+    "master": 5,
+    "master's": 5,
+    "mba": 5,
+    "phd": 6,
+    "doctorate": 6,
 }
 
 _DEGREE_KEYWORDS = {
@@ -60,6 +76,7 @@ _DEGREE_KEYWORDS = {
 
 
 # ── Resume text builder ───────────────────────────────────────────────────────
+
 
 def build_resume_text(row: pd.Series) -> str:
     """
@@ -131,6 +148,7 @@ def build_resume_text(row: pd.Series) -> str:
 
 # ── Scoring functions ─────────────────────────────────────────────────────────
 
+
 def _parse_skills(skills_str: str) -> set[str]:
     """Parse comma-separated skills string into a lowercase set."""
     if not skills_str or str(skills_str).lower() in ("nan", "none", ""):
@@ -175,7 +193,7 @@ def score_experience_fit(resume_years: float, job_text: str) -> float:
     gap = resume_years - required
 
     if gap >= 0:
-        return 1.0 if gap <= 3 else 0.8   # overqualified slightly penalised
+        return 1.0 if gap <= 3 else 0.8  # overqualified slightly penalised
     else:
         return max(0.0, 1.0 + gap * 0.2)  # underqualified: -0.2 per missing year
 
@@ -265,12 +283,7 @@ def compute_match_score(
     s_edu = score_education_fit(edu_level, job_lower)
     s_kw = score_title_keyword_match(resume_row, job_lower)
 
-    composite = (
-        0.40 * s_skills +
-        0.30 * s_exp +
-        0.15 * s_edu +
-        0.15 * s_kw
-    )
+    composite = 0.40 * s_skills + 0.30 * s_exp + 0.15 * s_edu + 0.15 * s_kw
     composite = round(min(1.0, max(0.0, composite)), 4)
 
     breakdown = {
@@ -283,6 +296,7 @@ def compute_match_score(
 
 
 # ── Main builder ──────────────────────────────────────────────────────────────
+
 
 def build_eval_dataset(
     eval_source_path: Path,
@@ -310,12 +324,16 @@ def build_eval_dataset(
 
     # Sample a manageable pool upfront — avoids O(n*m) regex scans
     if len(jobs_df) > jobs_sample_size:
-        jobs_df = jobs_df.sample(n=jobs_sample_size, random_state=random_seed).reset_index(drop=True)
+        jobs_df = jobs_df.sample(
+            n=jobs_sample_size, random_state=random_seed
+        ).reset_index(drop=True)
     logger.info(f"Using {len(jobs_df)} job descriptions (sampled pool)")
 
     records: list[dict[str, Any]] = []
 
-    for _, row in tqdm(source_df.iterrows(), total=len(source_df), desc="Building eval pairs"):
+    for _, row in tqdm(
+        source_df.iterrows(), total=len(source_df), desc="Building eval pairs"
+    ):
         resume_text = build_resume_text(row)
         category = str(row.get("Current_Job_Title", "Unknown")).strip()
 
@@ -323,36 +341,43 @@ def build_eval_dataset(
         pos_idx = int(rng.integers(len(jobs_df)))
         jd = str(jobs_df.iloc[pos_idx]["description"])
         score, breakdown = compute_match_score(row, jd)
-        records.append({
-            "resume_text": resume_text,
-            "job_description": jd,
-            "match_score": score,
-            "category": category,
-            "pair_type": "scored",
-            "score_breakdown": json.dumps(breakdown),
-        })
-
-        # ── Additional pairs for neg_ratio > 1 ───────────────────────────────
-        for _ in range(neg_ratio):
-            neg_idx = int(rng.integers(len(jobs_df)))
-            jd = str(jobs_df.iloc[neg_idx]["description"])
-            score, breakdown = compute_match_score(row, jd)
-            records.append({
+        records.append(
+            {
                 "resume_text": resume_text,
                 "job_description": jd,
                 "match_score": score,
                 "category": category,
                 "pair_type": "scored",
                 "score_breakdown": json.dumps(breakdown),
-            })
+            }
+        )
+
+        # ── Additional pairs for neg_ratio > 1 ───────────────────────────────
+        for _ in range(neg_ratio):
+            neg_idx = int(rng.integers(len(jobs_df)))
+            jd = str(jobs_df.iloc[neg_idx]["description"])
+            score, breakdown = compute_match_score(row, jd)
+            records.append(
+                {
+                    "resume_text": resume_text,
+                    "job_description": jd,
+                    "match_score": score,
+                    "category": category,
+                    "pair_type": "scored",
+                    "score_breakdown": json.dumps(breakdown),
+                }
+            )
 
     df = pd.DataFrame(records)
     logger.info(f"Built {len(df)} eval pairs")
-    logger.info(f"Score distribution:\n{df['match_score'].describe().round(3).to_string()}")
+    logger.info(
+        f"Score distribution:\n{df['match_score'].describe().round(3).to_string()}"
+    )
     return df
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
+
 
 def run_synthetic_generation(n_pairs: int = 500) -> pd.DataFrame:
     """
@@ -371,7 +396,9 @@ def run_synthetic_generation(n_pairs: int = 500) -> pd.DataFrame:
     logger.info("Building evaluation dataset from Kaggle structured resumes")
     logger.info("=" * 60)
 
-    eval_source = PROJECT_ROOT / "data" / "raw" / "eval_dataset" / "resume_dataset_1200.csv"
+    eval_source = (
+        PROJECT_ROOT / "data" / "raw" / "eval_dataset" / "resume_dataset_1200.csv"
+    )
     jobs_path = PROJECT_ROOT / "data" / "raw" / "jobs_clean.csv"
 
     if not eval_source.exists():
@@ -394,9 +421,9 @@ def run_synthetic_generation(n_pairs: int = 500) -> pd.DataFrame:
     # Quality filter
     before = len(df)
     df = df[
-        (df["resume_text"].str.len() > 50) &
-        (df["job_description"].str.len() > 80) &
-        (df["match_score"].between(0.0, 1.0))
+        (df["resume_text"].str.len() > 50)
+        & (df["job_description"].str.len() > 80)
+        & (df["match_score"].between(0.0, 1.0))
     ].reset_index(drop=True)
     logger.info(f"Quality filter: {before} → {len(df)} pairs")
 
@@ -409,14 +436,16 @@ def run_synthetic_generation(n_pairs: int = 500) -> pd.DataFrame:
         mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
         mlflow.set_experiment(MLFLOW_EXPERIMENT)
         with mlflow.start_run(run_name="eval-dataset-generation"):
-            mlflow.log_metrics({
-                "eval_pairs_total": float(len(df)),
-                "eval_positive_pairs": float((df["pair_type"] == "positive").sum()),
-                "eval_negative_pairs": float((df["pair_type"] == "negative").sum()),
-                "eval_score_mean": float(df["match_score"].mean()),
-                "eval_score_std": float(df["match_score"].std()),
-                "eval_unique_categories": float(df["category"].nunique()),
-            })
+            mlflow.log_metrics(
+                {
+                    "eval_pairs_total": float(len(df)),
+                    "eval_positive_pairs": float((df["pair_type"] == "positive").sum()),
+                    "eval_negative_pairs": float((df["pair_type"] == "negative").sum()),
+                    "eval_score_mean": float(df["match_score"].mean()),
+                    "eval_score_std": float(df["match_score"].std()),
+                    "eval_unique_categories": float(df["category"].nunique()),
+                }
+            )
             mlflow.log_artifact(str(output_path), artifact_path="eval")
             mlflow.set_tag("stage", "eval_dataset_generation")
             mlflow.set_tag("source", "kaggle:sayyedfaizan95/resume-and-job-description")
