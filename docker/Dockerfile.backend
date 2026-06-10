@@ -61,6 +61,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY src/ ./src/
 COPY backend/ ./backend/
 COPY configs/ ./configs/
+COPY data/skills_taxonomy.json ./data/skills_taxonomy.json
 
 # Create runtime directories with correct ownership
 RUN mkdir -p uploads logs models/cache models/fine_tuned && \

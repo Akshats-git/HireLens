@@ -112,8 +112,11 @@ rm /tmp/hirelens-env-prod
 echo "[4/5] Pulling Docker images and starting services..."
 $SSH "
     set -e
+    export GHCR_USER='${GHCR_USER}'
+    export POSTGRES_PASSWORD='${POSTGRES_PASSWORD}'
+
     # Login to ghcr.io
-    echo '${GHCR_TOKEN}' | docker login ghcr.io -u '${GHCR_USER}' --password-stdin
+    echo '${GHCR_TOKEN}' | docker login ghcr.io -u \"\${GHCR_USER}\" --password-stdin
 
     # Pull latest images
     cd ${APP_DIR}
