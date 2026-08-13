@@ -48,12 +48,12 @@ models/checkpoints/
 # ── Data (DVC manages these) ──────────────────────────────────────────────────
 data/raw/
 data/processed/
+data/eval/
 data/synthetic/
 uploads/
 !data/.gitkeep
 !data/raw/.gitkeep
 !data/processed/.gitkeep
-!data/synthetic/.gitkeep
 
 # ── DVC ───────────────────────────────────────────────────────────────────────
 .dvc/cache/

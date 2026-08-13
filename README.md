@@ -103,21 +103,24 @@ push to main
 Raw CSVs
     │
     ▼  src/data/ingestion.py
-Normalize text, remove PII artifacts, filter short docs (<100 chars)
+Download from Kaggle, normalize columns, drop rows under 50 chars
     │
     ▼  src/data/preprocessing.py
-Sentence-case, strip HTML, deduplicate, tokenize
-    │
-    ▼  src/data/synthetic_gen.py
-Weak-supervision pair generation:
-  - Embed all resumes + JDs with base MiniLM-L6-v2
-  - Cosine similarity > 0.65 → positive label (1.0)
-  - Cosine similarity < 0.35 → negative label (0.0)
-  - Balance ratio: ~1:2 (pos:neg)
+Clean text (NFKC, strip PII and decorative rules), detect resume sections,
+then build labelled pairs by weak supervision:
+  - Positive (1.0): posting matches one of the resume category's keywords
+  - Negative (0.0): posting matches none of them — a different domain,
+    not random noise
+  - Ratio: 1 positive to 2 negatives per resume
     │
     ▼
 data/processed/train_pairs.csv   (5,692 pairs — 1,897 pos / 3,795 neg)
 data/processed/val_pairs.csv     (712 pairs — 238 pos / 474 neg)
+data/processed/test_pairs.csv    (held out for evaluation)
+
+Separately, src/data/eval_dataset.py joins a structured resume dataset against
+real postings and scores each pair with the same four rules the API uses,
+producing data/eval/eval_pairs.csv as a model-independent reference set.
 ```
 
 ### 3. Model Training
@@ -396,7 +399,8 @@ HireLens/
 │   └── data/
 │       ├── ingestion.py      # Raw CSV loading + cleaning
 │       ├── preprocessing.py  # Text normalization
-│       └── synthetic_gen.py  # Weak-supervision pair generation
+│       ├── eval_dataset.py   # Rule-scored held-out evaluation set
+│       └── data_pipeline.py  # Stage orchestrator
 ├── frontend/                 # React + Vite + Tailwind
 │   └── src/pages/
 │       ├── Landing.jsx
@@ -405,7 +409,7 @@ HireLens/
 ├── data/
 │   ├── raw/                  # Original datasets (git-ignored)
 │   ├── processed/            # train/val pairs (git-ignored)
-│   ├── synthetic/            # Weak-supervision pairs (git-ignored)
+│   ├── eval/                 # Rule-scored eval pairs (git-ignored)
 │   └── skills_taxonomy.json  # 595 tech + 51 soft + 35 cert skills
 ├── models/
 │   ├── fine_tuned/hirelens_matcher/   # 608 MB fine-tuned weights

@@ -1,79 +1,85 @@
 """
-Preprocessing pipeline for HireLens.
+Preprocessing and training-pair construction.
 
 Stages:
-  1. PDF text extraction via pdfplumber
-  2. Text cleaning (noise removal, unicode normalisation, whitespace)
-  3. Section detection (Education, Experience, Skills, Projects)
-  4. Weak-supervision pair construction via category matching
-  5. Save processed data to data/processed/
+  1. Clean resume and job description text
+  2. Split resumes into named sections
+  3. Pair resumes with postings using category keywords as weak supervision
+  4. Split into train / validation / test and write to data/processed/
 """
 
 import os
 import re
-import sys
 import unicodedata
-from pathlib import Path
-from typing import Any
 
 import mlflow
+import numpy as np
 import pandas as pd
-import pdfplumber
 from loguru import logger
+from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from src.config import PROJECT_ROOT, get_section
+from src.logging_setup import configure_logging
+
+RAW_DIR = PROJECT_ROOT / "data" / "raw"
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
-PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
-MLFLOW_EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT_NAME", "hirelens-resume-matching")
+# Section headers are short lines; longer lines are body text that merely
+# happens to contain a header keyword.
+MAX_HEADER_CHARS = 60
 
-logger.remove()
-logger.add(
-    sys.stderr,
-    level="INFO",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}",
-)
-logger.add(
-    PROJECT_ROOT / "logs" / "preprocessing.log",
-    rotation="50 MB",
-    retention="14 days",
-    level="DEBUG",
-)
+# A section needs more than this many characters to count as populated.
+MIN_SECTION_CHARS = 20
 
 
-# ── Section patterns ──────────────────────────────────────────────────────────
+def _mlflow_tracking_uri() -> str:
+    return os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+
+
+def _mlflow_experiment() -> str:
+    return os.getenv("MLFLOW_EXPERIMENT_NAME", get_section("mlflow")["experiment_name"])
+
+
+# ── Patterns ──────────────────────────────────────────────────────────────────
 
 _SECTION_PATTERNS: dict[str, re.Pattern] = {
     "education": re.compile(
-        r"\b(education|academic|qualification|degree|university|college|school)\b",
-        re.IGNORECASE,
+        r"\b(education|academic|qualification|degree|university|college|school)\b", re.I
     ),
     "experience": re.compile(
-        r"\b(experience|employment|work history|career|professional background|job)\b",
-        re.IGNORECASE,
+        r"\b(experience|employment|work history|career|professional background)\b", re.I
     ),
     "skills": re.compile(
-        r"\b(skills|technologies|tools|competencies|proficiencies|technical)\b",
-        re.IGNORECASE,
+        r"\b(skills|technologies|tools|competencies|proficiencies|technical)\b", re.I
     ),
     "projects": re.compile(
-        r"\b(projects|portfolio|achievements|accomplishments)\b",
-        re.IGNORECASE,
+        r"\b(projects|portfolio|achievements|accomplishments)\b", re.I
     ),
     "certifications": re.compile(
-        r"\b(certifications?|certificates?|licenses?|credentials?)\b",
-        re.IGNORECASE,
+        r"\b(certifications?|certificates?|licenses?|credentials?)\b", re.I
     ),
-    "summary": re.compile(
-        r"\b(summary|objective|profile|about me|overview)\b",
-        re.IGNORECASE,
-    ),
+    "summary": re.compile(r"\b(summary|objective|profile|about me|overview)\b", re.I),
 }
 
-# Maps resume category labels → job description keywords for weak supervision
-_CATEGORY_TO_JD_KEYWORDS: dict[str, list[str]] = {
+# Unicode punctuation normalised to ASCII equivalents during cleaning.
+_PUNCTUATION_REPLACEMENTS = {
+    "’": "'",
+    "‘": "'",
+    "“": '"',
+    "”": '"',
+    "–": "-",
+    "—": "-",
+    "•": "*",
+    "·": "*",
+    "…": "...",
+    "﻿": "",
+}
+
+# Resume category to the posting keywords that mark a plausible match. Used as
+# weak supervision: a posting containing any keyword is a positive for that
+# category, and postings containing none are hard negatives.
+_CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "Data Science": [
         "machine learning",
         "data scientist",
@@ -158,132 +164,47 @@ _CATEGORY_TO_JD_KEYWORDS: dict[str, list[str]] = {
 }
 
 
-# ── PDF extraction ────────────────────────────────────────────────────────────
-
-
-def extract_text_from_pdf(pdf_path: Path) -> str:
-    """
-    Extract all text from a PDF file using pdfplumber.
-
-    Falls back to an empty string on any error rather than crashing the pipeline.
-
-    Args:
-        pdf_path: Absolute path to the PDF file.
-
-    Returns:
-        Extracted text, or empty string on failure.
-    """
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            pages = []
-            for page in pdf.pages:
-                text = page.extract_text(x_tolerance=2, y_tolerance=2)
-                if text:
-                    pages.append(text)
-            return "\n".join(pages)
-    except Exception as e:
-        logger.warning(f"PDF extraction failed for {pdf_path}: {e}")
-        return ""
-
-
-def extract_texts_from_pdf_dir(pdf_dir: Path) -> list[dict[str, str]]:
-    """
-    Batch-extract text from all PDFs in a directory.
-
-    Args:
-        pdf_dir: Directory containing .pdf files.
-
-    Returns:
-        List of dicts with keys 'filename' and 'text'.
-    """
-    pdf_files = list(pdf_dir.glob("**/*.pdf"))
-    logger.info(f"Found {len(pdf_files)} PDFs in {pdf_dir}")
-
-    results = []
-    for pdf_path in tqdm(pdf_files, desc="Extracting PDFs"):
-        text = extract_text_from_pdf(pdf_path)
-        if text.strip():
-            results.append({"filename": pdf_path.name, "text": text})
-        else:
-            logger.debug(f"Empty extraction: {pdf_path.name}")
-
-    logger.info(f"Successfully extracted {len(results)}/{len(pdf_files)} PDFs.")
-    return results
-
-
 # ── Text cleaning ─────────────────────────────────────────────────────────────
 
 
 def clean_text(text: str) -> str:
     """
-    Full text cleaning pipeline for resume / job description text.
+    Normalise raw extracted text for embedding.
 
-    Steps:
-        1. Unicode normalisation (NFKC)
-        2. Remove non-printable / control characters
-        3. Replace common unicode punctuation with ASCII equivalents
-        4. Collapse repeated punctuation and whitespace
-        5. Strip leading/trailing whitespace per line
-        6. Remove lines that are purely decorative (dashes, dots, stars)
+    Applies NFKC normalisation, strips control characters and contact details,
+    collapses whitespace and repeated punctuation, and drops decorative rules.
 
     Args:
-        text: Raw input text.
+        text: Raw text.
 
     Returns:
-        Cleaned text string.
+        Cleaned text, empty if the input was blank.
     """
     if not text or not text.strip():
         return ""
 
-    # 1. Unicode normalisation
     text = unicodedata.normalize("NFKC", text)
-
-    # 2. Remove control characters (keep newlines and tabs)
     text = "".join(
         ch for ch in text if unicodedata.category(ch) != "Cc" or ch in "\n\t"
     )
+    for source, replacement in _PUNCTUATION_REPLACEMENTS.items():
+        text = text.replace(source, replacement)
 
-    # 3. Replace unicode punctuation variants
-    replacements = {
-        "’": "'",
-        "‘": "'",
-        "“": '"',
-        "”": '"',
-        "–": "-",
-        "—": "-",
-        "•": "*",
-        "·": "*",
-        "…": "...",
-        "﻿": "",
-    }
-    for src, dst in replacements.items():
-        text = text.replace(src, dst)
-
-    # 4. Remove URLs
+    # Contact details carry no matching signal and leak PII into embeddings.
     text = re.sub(r"https?://\S+|www\.\S+", " ", text)
-
-    # 5. Remove email addresses
     text = re.sub(r"\S+@\S+\.\S+", " ", text)
-
-    # 6. Remove phone numbers
     text = re.sub(r"(\+?\d[\d\s\-().]{7,}\d)", " ", text)
 
-    # 7. Remove repeated punctuation (e.g. "---", "***", "...")
+    # Collapse runs such as "---" or "..." to a single character.
     text = re.sub(r"([^\w\s])\1{2,}", r"\1", text)
 
-    # 8. Collapse whitespace within lines, strip each line
     lines = []
     for line in text.splitlines():
         line = re.sub(r"[ \t]+", " ", line).strip()
-        # Drop decorative separator lines
-        if re.fullmatch(r"[\-_=*#|.]{2,}", line):
-            continue
-        if line:
+        if line and not re.fullmatch(r"[\-_=*#|.]{2,}", line):
             lines.append(line)
 
-    # 9. Collapse 3+ consecutive blank lines to 2
-    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(lines))
-    return cleaned.strip()
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 # ── Section detection ─────────────────────────────────────────────────────────
@@ -291,148 +212,200 @@ def clean_text(text: str) -> str:
 
 def detect_sections(text: str) -> dict[str, str]:
     """
-    Detect and extract named sections from resume text using header matching.
+    Split resume text into named sections by header matching.
 
-    Uses a line-by-line scan: when a line matches a section header pattern,
-    all subsequent lines until the next header are assigned to that section.
+    A short line matching a header pattern opens a section; everything until the
+    next header belongs to it. Text before any header lands in 'other'.
 
     Args:
         text: Cleaned resume text.
 
     Returns:
-        Dict mapping section name → section text content.
+        Mapping of section name to its content.
     """
     sections: dict[str, list[str]] = {name: [] for name in _SECTION_PATTERNS}
     sections["other"] = []
 
-    current_section = "other"
+    current = "other"
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
 
-        # Check if this line is a section header (short line matching a pattern)
-        matched_section = None
-        if len(stripped) < 60:
-            for section_name, pattern in _SECTION_PATTERNS.items():
-                if pattern.search(stripped):
-                    matched_section = section_name
-                    break
+        header = None
+        if len(stripped) < MAX_HEADER_CHARS:
+            header = next(
+                (
+                    name
+                    for name, pattern in _SECTION_PATTERNS.items()
+                    if pattern.search(stripped)
+                ),
+                None,
+            )
 
-        if matched_section:
-            current_section = matched_section
+        if header:
+            current = header
         else:
-            sections[current_section].append(stripped)
+            sections[current].append(stripped)
 
-    return {k: "\n".join(v).strip() for k, v in sections.items()}
+    return {name: "\n".join(lines).strip() for name, lines in sections.items()}
 
 
 def has_required_sections(sections: dict[str, str], min_sections: int = 2) -> bool:
-    """Return True if the resume has at least min_sections non-empty detected sections."""
-    non_empty = sum(1 for v in sections.values() if len(v) > 20)
-    return non_empty >= min_sections
+    """True if at least `min_sections` detected sections have real content."""
+    populated = sum(1 for text in sections.values() if len(text) > MIN_SECTION_CHARS)
+    return populated >= min_sections
 
 
-# ── Training pair construction ────────────────────────────────────────────────
+# ── Training pairs ────────────────────────────────────────────────────────────
+
+
+def _index_jobs_by_category(
+    categories: list[str], descriptions: list[str]
+) -> dict[str, np.ndarray]:
+    """
+    Map each resume category to the indices of postings matching its keywords.
+
+    Built once per category rather than once per resume. Scanning the full
+    postings table inside the resume loop costs one pass per resume — tens of
+    thousands of passes over a table with six figures of rows.
+
+    Args:
+        categories: Distinct resume categories.
+        descriptions: Job descriptions, in DataFrame row order.
+
+    Returns:
+        Mapping of category to a sorted array of matching row indices.
+    """
+    lowered = [description.lower() for description in descriptions]
+
+    matches: dict[str, np.ndarray] = {}
+    for category in categories:
+        keywords = _CATEGORY_KEYWORDS.get(category, [category.lower()])
+        matches[category] = np.array(
+            [
+                index
+                for index, description in enumerate(lowered)
+                if any(keyword in description for keyword in keywords)
+            ],
+            dtype=int,
+        )
+        if matches[category].size == 0:
+            logger.warning(f"No postings matched category '{category}'.")
+
+    return matches
 
 
 def build_training_pairs(
     resume_df: pd.DataFrame,
     jobs_df: pd.DataFrame,
-    neg_ratio: int = 2,
+    negatives_per_positive: int = 2,
     random_seed: int = 42,
 ) -> pd.DataFrame:
     """
-    Construct positive and hard-negative training pairs via weak supervision.
+    Build labelled resume/posting pairs using category keywords as weak supervision.
 
-    Strategy:
-      - POSITIVE: Resume category matched to a job description containing
-        category-specific keywords (category matching as weak supervision).
-      - NEGATIVE: Resume paired with a job from a different category bucket
-        (hard negatives — different domain, not random noise).
+    Positives pair a resume with a posting containing one of its category's
+    keywords. Negatives pair it with postings matching none of them — a different
+    professional domain rather than random noise.
 
     Args:
-        resume_df: DataFrame with columns [id, resume_text, category].
-        jobs_df: DataFrame with columns [job_id, title, description, ...].
-        neg_ratio: Number of negative pairs per positive pair.
-        random_seed: For reproducibility.
+        resume_df: Resumes with columns [id, resume_text, category].
+        jobs_df: Postings with a 'description' column.
+        negatives_per_positive: Negative pairs generated per positive pair.
+        random_seed: Seed for reproducible sampling.
 
     Returns:
-        DataFrame with columns:
-          [resume_id, resume_text, job_description, label, resume_category, pair_type]
+        DataFrame with [resume_id, resume_text, job_description, label,
+        resume_category, pair_type].
     """
-    import numpy as np
-
     rng = np.random.default_rng(random_seed)
-
     logger.info("Building training pairs via category-based weak supervision...")
 
-    pairs: list[dict[str, Any]] = []
-    jobs_list = jobs_df.to_dict("records")
+    descriptions = jobs_df["description"].tolist()
+    positive_index = _index_jobs_by_category(
+        resume_df["category"].unique().tolist(), descriptions
+    )
+    all_indices = np.arange(len(descriptions))
+    negative_index = {
+        category: np.setdiff1d(all_indices, positives, assume_unique=False)
+        for category, positives in positive_index.items()
+    }
 
-    for _, resume_row in tqdm(
-        resume_df.iterrows(), total=len(resume_df), desc="Pairing resumes"
+    pairs: list[dict] = []
+    for row in tqdm(
+        resume_df.itertuples(index=False), total=len(resume_df), desc="Pairing resumes"
     ):
-        category = resume_row["category"]
-        keywords = _CATEGORY_TO_JD_KEYWORDS.get(category, [category.lower()])
-
-        # Find positive jobs: descriptions containing category keywords
-        positive_jobs = [
-            j
-            for j in jobs_list
-            if any(kw in j["description"].lower() for kw in keywords)
-        ]
-
-        if not positive_jobs:
+        positives = positive_index[row.category]
+        if positives.size == 0:
             continue
 
-        # Sample 1 positive pair
-        pos_job = positive_jobs[rng.integers(len(positive_jobs))]
-        pairs.append(
-            {
-                "resume_id": resume_row["id"],
-                "resume_text": resume_row["resume_text"],
-                "job_description": pos_job["description"],
-                "label": 1.0,
-                "resume_category": category,
-                "pair_type": "positive",
-            }
-        )
-
-        # Sample hard negatives: jobs that do NOT match this category
-        negative_jobs = [
-            j
-            for j in jobs_list
-            if not any(kw in j["description"].lower() for kw in keywords)
-        ]
-
-        if not negative_jobs:
-            continue
-
-        n_neg = min(neg_ratio, len(negative_jobs))
-        neg_indices = rng.choice(len(negative_jobs), size=n_neg, replace=False)
-        for idx in neg_indices:
+        def add_pair(job_index: int, label: float, pair_type: str) -> None:
             pairs.append(
                 {
-                    "resume_id": resume_row["id"],
-                    "resume_text": resume_row["resume_text"],
-                    "job_description": negative_jobs[idx]["description"],
-                    "label": 0.0,
-                    "resume_category": category,
-                    "pair_type": "negative",
+                    "resume_id": row.id,
+                    "resume_text": row.resume_text,
+                    "job_description": descriptions[job_index],
+                    "label": label,
+                    "resume_category": row.category,
+                    "pair_type": pair_type,
                 }
             )
 
+        add_pair(int(rng.choice(positives)), 1.0, "positive")
+
+        negatives = negative_index[row.category]
+        if negatives.size == 0:
+            continue
+        sample_size = min(negatives_per_positive, negatives.size)
+        for job_index in rng.choice(negatives, size=sample_size, replace=False):
+            add_pair(int(job_index), 0.0, "negative")
+
     pairs_df = pd.DataFrame(pairs)
-    pos_count = (pairs_df["label"] == 1.0).sum()
-    neg_count = (pairs_df["label"] == 0.0).sum()
     logger.info(
-        f"Built {len(pairs_df)} pairs: {pos_count} positive, {neg_count} negative."
+        f"Built {len(pairs_df)} pairs: "
+        f"{(pairs_df['label'] == 1.0).sum()} positive, "
+        f"{(pairs_df['label'] == 0.0).sum()} negative."
     )
     return pairs_df
 
 
-# ── Main pipeline ─────────────────────────────────────────────────────────────
+def split_pairs(
+    pairs_df: pd.DataFrame, split: list[float], random_seed: int
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Split pairs into train / validation / test, stratified on the label.
+
+    Args:
+        pairs_df: All labelled pairs.
+        split: Three fractions summing to 1.0.
+        random_seed: Seed for reproducible splits.
+
+    Returns:
+        (train_df, val_df, test_df)
+    """
+    train_fraction, val_fraction, test_fraction = split
+    holdout_fraction = val_fraction + test_fraction
+
+    train_df, holdout_df = train_test_split(
+        pairs_df,
+        test_size=holdout_fraction,
+        random_state=random_seed,
+        stratify=pairs_df["label"],
+    )
+    val_df, test_df = train_test_split(
+        holdout_df,
+        test_size=test_fraction / holdout_fraction,
+        random_state=random_seed,
+        stratify=holdout_df["label"],
+    )
+    logger.info(
+        f"Split → train: {len(train_df)}, val: {len(val_df)}, test: {len(test_df)}"
+    )
+    return train_df, val_df, test_df
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 
 def run_preprocessing(
@@ -440,98 +413,95 @@ def run_preprocessing(
     jobs_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
-    Full preprocessing pipeline: clean → detect sections → build pairs → save.
+    Clean both datasets, build labelled pairs, split them, and write to disk.
 
     Args:
-        resume_df: Pre-loaded resume DataFrame (loaded from CSV if None).
-        jobs_df: Pre-loaded jobs DataFrame (loaded from CSV if None).
+        resume_df: Pre-loaded resumes; read from data/raw/ if omitted.
+        jobs_df: Pre-loaded postings; read from data/raw/ if omitted.
 
     Returns:
-        Training pairs DataFrame.
+        The full pairs DataFrame, before splitting.
     """
-    from src.data.ingestion import RAW_DIR
-
     logger.info("=" * 60)
-    logger.info("Starting HireLens preprocessing pipeline")
+    logger.info("HireLens preprocessing")
     logger.info("=" * 60)
 
-    # Load if not provided
+    data_config = get_section("data")
+    settings = data_config["preprocessing"]
+    random_seed = data_config["random_seed"]
+
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+
     if resume_df is None:
-        resume_csv = RAW_DIR / "resumes_clean.csv"
-        if not resume_csv.exists():
-            raise FileNotFoundError(
-                f"Resume CSV not found at {resume_csv}. Run ingestion first."
-            )
-        resume_df = pd.read_csv(resume_csv)
-        logger.info(f"Loaded {len(resume_df)} resumes from {resume_csv}")
-
+        resume_df = _read_required(RAW_DIR / "resumes_clean.csv", "resumes")
     if jobs_df is None:
-        jobs_csv = RAW_DIR / "jobs_clean.csv"
-        if not jobs_csv.exists():
-            raise FileNotFoundError(
-                f"Jobs CSV not found at {jobs_csv}. Run ingestion first."
-            )
-        jobs_df = pd.read_csv(jobs_csv)
-        logger.info(f"Loaded {len(jobs_df)} jobs from {jobs_csv}")
+        jobs_df = _read_required(RAW_DIR / "jobs_clean.csv", "job postings")
 
-    # ── Step 1: Clean resume text ─────────────────────────────────────────────
     logger.info("Cleaning resume text...")
     resume_df = resume_df.copy()
     resume_df["resume_text_clean"] = resume_df["resume_text"].apply(clean_text)
-
-    # Drop too-short cleaned texts
     before = len(resume_df)
-    resume_df = resume_df[resume_df["resume_text_clean"].str.len() > 100]
+    resume_df = resume_df[
+        resume_df["resume_text_clean"].str.len() > settings["min_resume_chars"]
+    ].reset_index(drop=True)
     logger.info(f"After cleaning: {before} → {len(resume_df)} resumes")
 
-    # ── Step 2: Detect sections ───────────────────────────────────────────────
     logger.info("Detecting resume sections...")
-    section_records = resume_df["resume_text_clean"].apply(detect_sections)
-    sections_df = pd.DataFrame(section_records.tolist())
-    resume_df = pd.concat([resume_df.reset_index(drop=True), sections_df], axis=1)
+    sections_df = pd.DataFrame(
+        resume_df["resume_text_clean"].apply(detect_sections).tolist()
+    )
+    resume_df = pd.concat([resume_df, sections_df], axis=1)
 
-    # ── Step 3: Clean job descriptions ───────────────────────────────────────
     logger.info("Cleaning job descriptions...")
     jobs_df = jobs_df.copy()
     jobs_df["description"] = jobs_df["description"].apply(clean_text)
-    jobs_df = jobs_df[jobs_df["description"].str.len() > 50]
+    jobs_df = jobs_df[
+        jobs_df["description"].str.len() > settings["min_jd_chars"]
+    ].reset_index(drop=True)
 
-    # ── Step 4: Build training pairs ──────────────────────────────────────────
-    pairs_df = build_training_pairs(resume_df, jobs_df)
-
-    # ── Step 5: Train/val/test split ──────────────────────────────────────────
-    from sklearn.model_selection import train_test_split
-
-    train_df, temp_df = train_test_split(
-        pairs_df, test_size=0.20, random_state=42, stratify=pairs_df["label"]
+    pairs_df = build_training_pairs(
+        resume_df,
+        jobs_df,
+        negatives_per_positive=settings["negatives_per_positive"],
+        random_seed=random_seed,
     )
-    val_df, test_df = train_test_split(
-        temp_df, test_size=0.50, random_state=42, stratify=temp_df["label"]
-    )
-
-    logger.info(
-        f"Split → train: {len(train_df)}, val: {len(val_df)}, test: {len(test_df)}"
+    train_df, val_df, test_df = split_pairs(
+        pairs_df, data_config["train_val_test_split"], random_seed
     )
 
-    # ── Step 6: Save outputs ──────────────────────────────────────────────────
-    resume_out = PROCESSED_DIR / "resumes_processed.csv"
-    jobs_out = PROCESSED_DIR / "jobs_processed.csv"
-    train_out = PROCESSED_DIR / "train_pairs.csv"
-    val_out = PROCESSED_DIR / "val_pairs.csv"
-    test_out = PROCESSED_DIR / "test_pairs.csv"
+    outputs = {
+        "resumes_processed.csv": resume_df,
+        "jobs_processed.csv": jobs_df,
+        "train_pairs.csv": train_df,
+        "val_pairs.csv": val_df,
+        "test_pairs.csv": test_df,
+    }
+    for name, frame in outputs.items():
+        frame.to_csv(PROCESSED_DIR / name, index=False)
+    logger.info(f"Wrote {len(outputs)} files to {PROCESSED_DIR}")
 
-    resume_df.to_csv(resume_out, index=False)
-    jobs_df.to_csv(jobs_out, index=False)
-    train_df.to_csv(train_out, index=False)
-    val_df.to_csv(val_out, index=False)
-    test_df.to_csv(test_out, index=False)
+    _log_to_mlflow(resume_df, jobs_df, pairs_df, train_df, val_df, test_df)
 
-    logger.info(f"Saved processed files to {PROCESSED_DIR}")
+    logger.success("Preprocessing complete.")
+    return pairs_df
 
-    # ── Step 7: Log to MLflow ─────────────────────────────────────────────────
+
+def _read_required(path, label: str) -> pd.DataFrame:
+    """Read a CSV the pipeline depends on, with an actionable error if missing."""
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{label.capitalize()} CSV not found at {path}. Run the ingest stage first."
+        )
+    df = pd.read_csv(path)
+    logger.info(f"Loaded {len(df)} {label} from {path}")
+    return df
+
+
+def _log_to_mlflow(resume_df, jobs_df, pairs_df, train_df, val_df, test_df) -> None:
+    """Record preprocessing counts to MLflow. Failures are non-fatal."""
     try:
-        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-        mlflow.set_experiment(MLFLOW_EXPERIMENT)
+        mlflow.set_tracking_uri(_mlflow_tracking_uri())
+        mlflow.set_experiment(_mlflow_experiment())
         with mlflow.start_run(run_name="data-preprocessing"):
             mlflow.log_metrics(
                 {
@@ -545,13 +515,11 @@ def run_preprocessing(
                 }
             )
             mlflow.set_tag("stage", "preprocessing")
-            logger.success("Preprocessing stats logged to MLflow.")
-    except Exception as e:
-        logger.warning(f"MLflow logging failed (non-fatal): {e}")
-
-    logger.success("Preprocessing pipeline complete.")
-    return pairs_df
+            logger.success("Preprocessing statistics logged to MLflow.")
+    except Exception as exc:
+        logger.warning(f"MLflow logging failed (non-fatal): {exc}")
 
 
 if __name__ == "__main__":
+    configure_logging(log_file="preprocessing.log")
     run_preprocessing()

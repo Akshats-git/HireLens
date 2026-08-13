@@ -22,6 +22,8 @@ import mlflow
 from loguru import logger
 from mlflow import MlflowClient
 
+from src.logging_setup import configure_logging
+
 from registry.config import (
     EXPERIMENT_NAME,
     PROMOTION_THRESHOLDS,
@@ -34,13 +36,6 @@ from registry.config import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EVAL_REPORT = PROJECT_ROOT / "logs" / "evaluation_report.json"
 MODEL_DIR = PROJECT_ROOT / "models" / "fine_tuned" / "hirelens_matcher"
-
-logger.remove()
-logger.add(
-    sys.stderr,
-    level="INFO",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {message}",
-)
 
 # Aliases used instead of deprecated lifecycle stages
 ALIAS_STAGING = "staging"
@@ -250,6 +245,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    configure_logging()
     mlflow.set_tracking_uri(get_tracking_uri())
     client = get_client()
     get_or_create_experiment()

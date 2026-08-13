@@ -53,10 +53,10 @@ stages:
     desc: "Build train/val/test pairs with weak-supervision labels"
 
   # ── 3. Evaluation Set Construction ───────────────────────────────────────────
-  synthetic:
-    cmd: python -m src.data.data_pipeline --stage synthetic
+  eval_set:
+    cmd: python -m src.data.data_pipeline --stage eval-set
     deps:
-      - src/data/synthetic_gen.py
+      - src/data/eval_dataset.py
       - src/data/data_pipeline.py
       - data/raw/jobs_clean.csv
       - data/raw/eval_dataset/resume_dataset_1200.csv
@@ -65,7 +65,7 @@ stages:
           - data.random_seed
           - data.eval_set
     outs:
-      - data/synthetic/synthetic_pairs.csv
+      - data/eval/eval_pairs.csv
     desc: "Score structured resumes against real job postings to build a held-out eval set"
 
   # ── 4. Model Training ────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ stages:
     deps:
       - src/evaluation/metrics.py
       - src/features/ner.py
-      - src/data/synthetic_gen.py
+      - src/data/eval_dataset.py
       - models/fine_tuned/hirelens_matcher
       - data/processed/test_pairs.csv
       - data/raw/eval_dataset/resume_dataset_1200.csv
