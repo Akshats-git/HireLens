@@ -35,7 +35,12 @@ export const bulkAnalyze = (resumeFiles, jobDescription) => {
   return http.post('/recruiter/bulk-analyze', form);
 };
 
-export const getCandidate = (id) => http.get(`/recruiter/candidate/${id}`);
+export const getCandidate = (batchId, candidateId) =>
+  http.get(
+    `/recruiter/batches/${encodeURIComponent(batchId)}/candidates/${encodeURIComponent(candidateId)}`,
+  );
 
-export const filterCandidates = (filters) =>
-  http.post('/recruiter/filter', filters);
+// Filtering runs server-side against a specific batch, so the batch_id returned
+// by bulkAnalyze must be passed back with the filters.
+export const filterCandidates = (batchId, filters) =>
+  http.post('/recruiter/filter', { batch_id: batchId, ...filters });

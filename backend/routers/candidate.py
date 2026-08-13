@@ -1,10 +1,9 @@
 """
-Candidate-facing endpoint.
+Candidate endpoint.
 
 POST /api/candidate/analyze
-  - Accepts a resume PDF + job description text
-  - Returns overall score, 4-component breakdown, missing skills, suggestions
-  - Target latency: < 3 seconds (GPU path with warm models)
+    Score one resume PDF against a pasted job description and return the overall
+    match, the four-component breakdown, missing skills, and suggestions.
 """
 
 import asyncio
@@ -13,6 +12,13 @@ import time
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from loguru import logger
 
+from ..config import (
+    MAX_JD_CHARS,
+    MAX_UPLOAD_BYTES,
+    MAX_UPLOAD_SIZE_MB,
+    MIN_JD_CHARS,
+    MIN_RESUME_CHARS,
+)
 from ..schemas.candidate import AnalyzeResponse
 from ..schemas.common import ScoreBreakdown
 from ..services.cache_service import get_cache
@@ -21,8 +27,14 @@ from ..services.pdf_service import extract_text
 
 router = APIRouter(prefix="/api/candidate", tags=["candidate"])
 
-_MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
-_ACCEPTED_CONTENT_TYPES = {"application/pdf", "application/octet-stream"}
+# Browsers sometimes send a generic type for drag-and-dropped files, so the
+# filename extension is accepted as a fallback signal.
+_ACCEPTED_CONTENT_TYPES = frozenset({"application/pdf", "application/octet-stream"})
+
+_UNREADABLE_PDF = (
+    "Could not extract enough text from the PDF. Make sure it is not a "
+    "scanned or image-only document."
+)
 
 
 @router.post(
@@ -30,94 +42,91 @@ _ACCEPTED_CONTENT_TYPES = {"application/pdf", "application/octet-stream"}
     response_model=AnalyzeResponse,
     summary="Analyze a resume against a job description",
     responses={
-        415: {"description": "Non-PDF file uploaded"},
-        413: {"description": "File exceeds 10 MB"},
-        422: {"description": "PDF could not be parsed or text is too short"},
+        400: {"description": "Empty file"},
+        413: {"description": "File exceeds the size limit"},
+        415: {"description": "Uploaded file is not a PDF"},
+        422: {"description": "PDF could not be parsed, or its text is too short"},
     },
 )
 async def analyze_resume(
     resume: UploadFile = File(..., description="Candidate resume in PDF format"),
     job_description: str = Form(
-        ..., min_length=50, description="Full job description text"
+        ...,
+        min_length=MIN_JD_CHARS,
+        max_length=MAX_JD_CHARS,
+        description="Full job description text",
     ),
 ) -> AnalyzeResponse:
-    t_start = time.perf_counter()
+    started = time.perf_counter()
 
-    # ── Validate upload ────────────────────────────────────────────────────────
-    content_type = (resume.content_type or "").lower()
     filename = resume.filename or "resume.pdf"
+    content_type = (resume.content_type or "").lower()
     if content_type not in _ACCEPTED_CONTENT_TYPES and not filename.lower().endswith(
         ".pdf"
     ):
         raise HTTPException(status_code=415, detail="Only PDF files are accepted.")
 
-    file_bytes = await resume.read()
-    if len(file_bytes) == 0:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-    if len(file_bytes) > _MAX_FILE_BYTES:
+    if resume.size is not None and resume.size > MAX_UPLOAD_BYTES:
         raise HTTPException(
-            status_code=413, detail="File exceeds the 10 MB size limit."
+            status_code=413,
+            detail=f"File exceeds the {MAX_UPLOAD_SIZE_MB} MB size limit.",
         )
 
-    # ── Extract text from PDF ──────────────────────────────────────────────────
-    loop = asyncio.get_event_loop()
+    file_bytes = await resume.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {MAX_UPLOAD_SIZE_MB} MB size limit.",
+        )
+
+    loop = asyncio.get_running_loop()
+
     try:
         resume_text: str = await loop.run_in_executor(
             None, extract_text, file_bytes, filename
         )
     except Exception as exc:
-        logger.error(f"PDF extraction error [{filename}]: {exc}")
-        raise HTTPException(status_code=422, detail=f"Could not parse PDF: {exc}")
+        logger.error(f"PDF extraction failed for '{filename}': {exc}")
+        raise HTTPException(status_code=422, detail=_UNREADABLE_PDF)
 
-    if len(resume_text) < 100:
-        raise HTTPException(
-            status_code=422,
-            detail="Could not extract sufficient text from the PDF. "
-            "Ensure the file is not scanned-only (image-based).",
-        )
+    if len(resume_text) < MIN_RESUME_CHARS:
+        raise HTTPException(status_code=422, detail=_UNREADABLE_PDF)
 
-    # ── Cache lookup ───────────────────────────────────────────────────────────
     cache = get_cache()
     cache_key = cache.make_analysis_key(resume_text, job_description)
-    cached = cache.get(cache_key)
-    if cached:
-        logger.debug(f"Cache hit for {filename}")
-        elapsed_ms = (time.perf_counter() - t_start) * 1000
-        return _to_response(cached, elapsed_ms)
 
-    # ── ML inference ───────────────────────────────────────────────────────────
-    ml = get_ml_service()
+    cached = cache.get(cache_key)
+    if cached is not None:
+        logger.debug(f"Cache hit for '{filename}'")
+        return _to_response(cached, (time.perf_counter() - started) * 1000)
+
     try:
         result: dict = await loop.run_in_executor(
-            None, ml.analyze, resume_text, job_description
+            None, get_ml_service().analyze, resume_text, job_description
         )
     except Exception as exc:
-        logger.error(f"ML analysis failed [{filename}]: {exc}")
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}")
+        logger.exception(f"Analysis failed for '{filename}': {exc}")
+        raise HTTPException(
+            status_code=500, detail="Analysis failed. Please try again."
+        )
 
     cache.set(cache_key, result)
 
-    elapsed_ms = (time.perf_counter() - t_start) * 1000
+    elapsed_ms = (time.perf_counter() - started) * 1000
     logger.info(
         f"analyze | {filename} | score={result['score_pct']:.1f} | {elapsed_ms:.0f}ms"
     )
     return _to_response(result, elapsed_ms)
 
 
-# ── Helper ─────────────────────────────────────────────────────────────────────
-
-
 def _to_response(result: dict, elapsed_ms: float) -> AnalyzeResponse:
-    bd = result["breakdown"]
+    """Map a raw analysis dict onto the public response model."""
     return AnalyzeResponse(
         score=result["score_pct"],
         label=result["label"],
-        breakdown=ScoreBreakdown(
-            skills_match=bd["skills_match"],
-            experience_relevance=bd["experience_relevance"],
-            education_fit=bd["education_fit"],
-            keyword_alignment=bd["keyword_alignment"],
-        ),
+        breakdown=ScoreBreakdown(**result["breakdown"]),
         matched_skills=result.get("matched_skills", []),
         missing_skills=result.get("missing_skills", []),
         suggestions=result.get("suggestions", []),

@@ -214,6 +214,7 @@ export default function Recruiter() {
   const [files, setFiles]             = useState([]);
   const [jd, setJd]                   = useState('');
   const [candidates, setCandidates]   = useState([]);
+  const [batchId, setBatchId]         = useState(null);
   const [loading, setLoading]         = useState(false);
   const [filtering, setFiltering]     = useState(false);
   const [error, setError]             = useState('');
@@ -240,6 +241,7 @@ export default function Recruiter() {
     try {
       const data = await bulkAnalyze(files, jd);
       setCandidates(data.candidates);
+      setBatchId(data.batch_id);
       setAnalyzed(true);
       setFilters(DEFAULT_FILTERS);
     } catch (err) {
@@ -249,10 +251,12 @@ export default function Recruiter() {
     }
   };
 
-  const handleApplyFilters = async () => {
+  const applyFilters = async (next) => {
+    if (!batchId) return;
+    setError('');
     setFiltering(true);
     try {
-      const data = await filterCandidates(filters);
+      const data = await filterCandidates(batchId, next);
       setCandidates(data.candidates);
     } catch (err) {
       setError(err.message);
@@ -261,18 +265,11 @@ export default function Recruiter() {
     }
   };
 
-  const handleResetFilters = async () => {
+  const handleApplyFilters = () => applyFilters(filters);
+
+  const handleResetFilters = () => {
     setFilters(DEFAULT_FILTERS);
-    if (analyzed) {
-      setFiltering(true);
-      try {
-        const data = await filterCandidates(DEFAULT_FILTERS);
-        setCandidates(data.candidates);
-      } catch {
-        // filter reset failure is non-critical
-      }
-      setFiltering(false);
-    }
+    return applyFilters(DEFAULT_FILTERS);
   };
 
   return (

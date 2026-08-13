@@ -1,37 +1,40 @@
 """
-ML service wrapper.
+Loads the ML stack once at startup and exposes the single scoring entry point
+used by both routers.
 
-Loads all heavy ML components once at startup and exposes a single
-`analyze(resume_text, jd_text)` method used by both routers.
+Model imports are deferred to `startup()` so that importing this module — which
+the test suite does with the service mocked — does not pull in torch and spaCy.
 """
 
-import sys
 import time
-from pathlib import Path
 from typing import Optional
 
 from loguru import logger
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from src.config import get_section
 
-# Experience level thresholds (years)
-_EXP_LEVELS = [
-    ("lead", 10.0),
-    ("senior", 5.0),
-    ("mid", 2.0),
-    ("entry", 0.0),
-]
+# Lower bound in years for each tier, ordered highest tier first so the first
+# threshold met wins.
+_EXPERIENCE_TIERS: list[tuple[str, float]] = sorted(
+    (
+        (level, float(years))
+        for level, years in get_section("scoring")["experience_levels"].items()
+    ),
+    key=lambda tier: tier[1],
+    reverse=True,
+)
 
 
-def _years_to_level(years: float) -> str:
-    for label, threshold in _EXP_LEVELS:
-        if years >= threshold:
-            return label
-    return "entry"
+def years_to_level(years: float) -> str:
+    """Map years of experience to a seniority tier from configs/config.yaml."""
+    for level, minimum in _EXPERIENCE_TIERS:
+        if years >= minimum:
+            return level
+    return _EXPERIENCE_TIERS[-1][0]
 
 
 class MLService:
-    """Singleton wrapper around scorer, embeddings, and NER."""
+    """Holds the scorer and skill extractor for the lifetime of the process."""
 
     def __init__(self) -> None:
         self._scorer = None
@@ -39,53 +42,65 @@ class MLService:
         self._loaded = False
 
     def startup(self) -> None:
-        """Load all ML models. Must be called once before serving requests."""
+        """
+        Load the models. Called once from the application lifespan.
+
+        Raises:
+            Exception: Propagated so the process fails fast rather than serving
+                       requests that would all return 500.
+        """
         logger.info("Loading ML models…")
-        t0 = time.perf_counter()
+        started = time.perf_counter()
 
-        if str(PROJECT_ROOT) not in sys.path:
-            sys.path.insert(0, str(PROJECT_ROOT))
-
-        from src.models.scorer import get_scorer
         from src.features.ner import get_extractor
+        from src.models.scorer import get_scorer
 
         self._scorer = get_scorer()
         self._extractor = get_extractor()
 
-        # Warm-up pass to JIT-compile any lazy code paths
+        # First inference compiles lazy code paths and allocates GPU buffers;
+        # doing it here keeps that cost off the first real request.
         self._scorer.score(
-            "Software engineer with 3 years Python experience.",
+            "Software engineer with 3 years of Python experience.",
             "Seeking a Python backend developer with REST API skills.",
         )
 
         self._loaded = True
-        elapsed = time.perf_counter() - t0
-        logger.info(f"ML models ready in {elapsed:.1f}s")
+        logger.info(f"ML models ready in {time.perf_counter() - started:.1f}s")
 
     def analyze(self, resume_text: str, jd_text: str) -> dict:
         """
-        Full match scoring pipeline.
+        Score a resume against a job description.
+
+        Args:
+            resume_text: Extracted resume text.
+            jd_text: Job description text.
 
         Returns:
-            dict matching MatchResult.to_dict() plus an 'experience_level' key.
+            MatchResult.to_dict() plus an 'experience_level' key, which is None
+            when the seniority tier could not be determined.
+
+        Raises:
+            RuntimeError: If called before `startup()`.
         """
         if not self._loaded:
-            raise RuntimeError("ML models not loaded — call startup() first.")
+            raise RuntimeError("ML models are not loaded — call startup() first.")
 
-        result = self._scorer.score(resume_text, jd_text)
-        output = result.to_dict()
+        output = self._scorer.score(resume_text, jd_text).to_dict()
 
-        # Attach experience level derived from NER
+        # Seniority is supplementary; a failure here should not sink the score.
         try:
-            ner = self._extractor.extract(resume_text)
-            output["experience_level"] = _years_to_level(ner.experience_years)
-        except Exception:
+            extraction = self._extractor.extract(resume_text)
+            output["experience_level"] = years_to_level(extraction.experience_years)
+        except Exception as exc:
+            logger.warning(f"Could not determine experience level: {exc}")
             output["experience_level"] = None
 
         return output
 
     @property
     def is_ready(self) -> bool:
+        """True once the models have finished loading."""
         return self._loaded
 
 
@@ -95,6 +110,7 @@ _ml_service: Optional[MLService] = None
 
 
 def get_ml_service() -> MLService:
+    """Return the shared MLService instance."""
     global _ml_service
     if _ml_service is None:
         _ml_service = MLService()

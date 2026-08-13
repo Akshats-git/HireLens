@@ -107,33 +107,30 @@ def client(mock_ml):
     The startup lifespan is allowed to run but get_ml_service() returns
     the lightweight mock so no models are loaded.
     """
-    patches = [
+    with (
         patch("backend.main.get_ml_service", return_value=mock_ml),
         patch("backend.routers.candidate.get_ml_service", return_value=mock_ml),
         patch("backend.routers.recruiter.get_ml_service", return_value=mock_ml),
-        patch(
-            "backend.routers.candidate.extract_text",
-            return_value=MOCK_RESUME_TEXT,
-        ),
-        patch(
-            "backend.routers.recruiter.extract_text",
-            return_value=MOCK_RESUME_TEXT,
-        ),
-    ]
-
-    with (
-        patches[0],
-        patches[1],
-        patches[2],
-        patches[3],
-        patches[4],
+        patch("backend.routers.candidate.extract_text", return_value=MOCK_RESUME_TEXT),
+        patch("backend.routers.recruiter.extract_text", return_value=MOCK_RESUME_TEXT),
     ):
         from backend.main import app
 
-        # Clear candidate store between test sessions
-        from backend.routers import recruiter as rec_module
+        with TestClient(app, raise_server_exceptions=True) as test_client:
+            yield test_client
 
-        rec_module._candidate_store.clear()
 
-        with TestClient(app, raise_server_exceptions=True) as c:
-            yield c
+@pytest.fixture(autouse=True)
+def isolated_state():
+    """
+    Reset shared server state between tests.
+
+    The result store and analysis cache are process-wide singletons, so without
+    this a batch or cached score from one test leaks into the next.
+    """
+    from backend.services.cache_service import get_cache
+    from backend.services.result_store import get_result_store
+
+    get_result_store().clear()
+    get_cache()._memory.clear()
+    yield
