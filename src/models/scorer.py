@@ -1,161 +1,84 @@
 """
-4-component match scorer for HireLens.
+Four-component match scorer.
 
-Computes:
-  1. Skills Match Score      — Jaccard + semantic similarity of skill sets   (weight: 0.40)
-  2. Experience Relevance    — Semantic similarity of experience sections     (weight: 0.30)
-  3. Education Fit Score     — Rule-based degree hierarchy + semantic         (weight: 0.15)
-  4. Keyword Alignment Score — TF-IDF weighted keyword overlap                (weight: 0.15)
+Combines, using the weights in configs/config.yaml:
+  1. Skills match       — Jaccard overlap blended with semantic similarity
+  2. Experience relevance — semantic similarity plus a years-of-experience delta
+  3. Education fit      — degree-hierarchy gap between resume and posting
+  4. Keyword alignment  — resume coverage of the posting's most emphasised terms
 
-Returns a MatchResult with the final score, per-component breakdown,
-score label (Excellent/Good/Fair/Poor), and improvement suggestions.
+Produces a MatchResult carrying the overall score, the per-component breakdown,
+a human-readable label, and improvement suggestions.
 """
 
 import re
-import sys
 from dataclasses import dataclass, field
 from math import log
-from pathlib import Path
 from typing import Any
 
 import numpy as np
-import yaml
 from loguru import logger
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_CONFIG_PATH = PROJECT_ROOT / "configs" / "config.yaml"
-
-logger.remove()
-logger.add(
-    sys.stderr,
-    level="INFO",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}",
+from src.config import get_section
+from src.features.patterns import (
+    DEGREE_RANK,
+    detect_education_level,
+    extract_experience_years,
+    required_experience_years,
 )
 
+# Weighting between exact skill overlap and embedding similarity.
+JACCARD_WEIGHT = 0.60
+SEMANTIC_WEIGHT = 0.40
 
-def _load_config() -> dict:
-    with open(_CONFIG_PATH) as f:
-        return yaml.safe_load(f)
+# Neutral score used when a component has nothing to compare.
+NEUTRAL_SCORE = 0.5
 
+# Education fit by how many degree levels the resume falls short.
+_EDUCATION_GAP_SCORES = {0: 1.0, -1: 0.7, -2: 0.4}
+_EDUCATION_GAP_FLOOR = 0.2
 
-# ── Degree hierarchy ──────────────────────────────────────────────────────────
+# A posting that omits its education requirement is treated as wanting a degree.
+_ASSUMED_JD_EDUCATION = "bachelors"
 
-_DEGREE_ORDER = [
-    "none",
-    "bootcamp",
-    "certification",
-    "associate",
-    "diploma",
-    "bachelors",
-    "masters",
-    "phd",
-]
-_DEGREE_RANK = {d: i for i, d in enumerate(_DEGREE_ORDER)}
+# Experience deltas, in years, translated into a bonus on the semantic score.
+_EXPERIENCE_OVERQUALIFIED_YEARS = 3
+_EXPERIENCE_MATCH_BONUS = 0.1
+_EXPERIENCE_SHORTFALL_PER_YEAR = 0.05
+_EXPERIENCE_MAX_PENALTY = -0.2
 
-_EDU_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("phd", re.compile(r"\b(ph\.?d|doctorate|doctoral)\b", re.I)),
-    (
-        "masters",
-        re.compile(r"\b(m\.?s\.?|m\.?eng\.?|m\.?b\.?a\.?|master(?:\'?s)?)\b", re.I),
-    ),
-    (
-        "bachelors",
-        re.compile(
-            r"\b(b\.?s\.?|b\.?e\.?|b\.?tech\.?|bachelor(?:\'?s)?|undergraduate)\b", re.I
-        ),
-    ),
-    ("associate", re.compile(r"\b(associate(?:\'?s)?)\b", re.I)),
-    ("diploma", re.compile(r"\b(diploma)\b", re.I)),
-    ("bootcamp", re.compile(r"\b(bootcamp|nanodegree|coding school)\b", re.I)),
-    ("certification", re.compile(r"\b(certificate|certified|certification)\b", re.I)),
-]
+# Suggestion trigger points.
+_LOW_SKILLS = 0.5
+_VERY_LOW_SKILLS = 0.3
+_LOW_EXPERIENCE = 0.5
+_LOW_EDUCATION = 0.5
+_LOW_KEYWORDS = 0.4
+_STRONG_OVERALL = 0.85
 
-_EXP_PATTERN = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(?:\+|plus)?\s*(?:to\s*\d+\s*)?years?\s*(?:of\s+)?(?:experience|exp\.?)",
-    re.I,
+MAX_MISSING_SKILLS_REPORTED = 10
+MAX_MISSING_SKILLS_SUGGESTED = 5
+
+_STOPWORDS = frozenset(
+    """
+    a an the and or but in on at to for of with by from is are was were be been
+    being have has had do does did will would could should may might shall can
+    need dare ought used we you i he she it they them their our your this that
+    these those what which who whom not no nor so yet both either neither
+    """.split()
 )
 
-# Simple stopwords for TF-IDF
-_STOPWORDS = {
-    "a",
-    "an",
-    "the",
-    "and",
-    "or",
-    "but",
-    "in",
-    "on",
-    "at",
-    "to",
-    "for",
-    "of",
-    "with",
-    "by",
-    "from",
-    "is",
-    "are",
-    "was",
-    "were",
-    "be",
-    "been",
-    "being",
-    "have",
-    "has",
-    "had",
-    "do",
-    "does",
-    "did",
-    "will",
-    "would",
-    "could",
-    "should",
-    "may",
-    "might",
-    "shall",
-    "can",
-    "need",
-    "dare",
-    "ought",
-    "used",
-    "we",
-    "you",
-    "i",
-    "he",
-    "she",
-    "it",
-    "they",
-    "them",
-    "their",
-    "our",
-    "your",
-    "this",
-    "that",
-    "these",
-    "those",
-    "what",
-    "which",
-    "who",
-    "whom",
-    "not",
-    "no",
-    "nor",
-    "so",
-    "yet",
-    "both",
-    "either",
-    "neither",
-}
+_TOKEN_PATTERN = re.compile(r"\b[a-z][a-z0-9+#.]+\b")
 
 
-# ── Output dataclass ──────────────────────────────────────────────────────────
+# ── Result ────────────────────────────────────────────────────────────────────
 
 
 @dataclass
 class MatchResult:
-    """Complete match result with scores, label, and suggestions."""
+    """A complete resume-to-posting match, with component scores and advice."""
 
     final_score: float  # 0.0–1.0
-    score_pct: float  # 0–100 (display)
+    score_pct: float  # 0–100, for display
     label: str  # Excellent / Good / Fair / Poor
     skills_match: float
     experience_relevance: float
@@ -177,18 +100,31 @@ class MatchResult:
                 "keyword_alignment": round(self.keyword_alignment, 4),
             },
             "matched_skills": self.matched_skills,
-            "missing_skills": self.missing_skills[:10],
+            "missing_skills": self.missing_skills[:MAX_MISSING_SKILLS_REPORTED],
             "suggestions": self.suggestions,
         }
 
 
-# ── Individual scorers ────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _tokenize(text: str) -> list[str]:
-    """Lowercase word tokenization, removing stopwords and short tokens."""
-    words = re.findall(r"\b[a-z][a-z0-9+#.]{1,}\b", text.lower())
-    return [w for w in words if w not in _STOPWORDS and len(w) > 1]
+def tokenize(text: str) -> list[str]:
+    """Lowercase the text and return its content words, minus stopwords."""
+    return [
+        token
+        for token in _TOKEN_PATTERN.findall(text.lower())
+        if token not in _STOPWORDS
+    ]
+
+
+def _cosine(a: np.ndarray | None, b: np.ndarray | None) -> float | None:
+    """Dot product of two L2-normalised embeddings, or None if either is absent."""
+    if a is None or b is None:
+        return None
+    return float(np.clip(np.dot(np.atleast_1d(a), np.atleast_1d(b)), 0.0, 1.0))
+
+
+# ── Component scorers ─────────────────────────────────────────────────────────
 
 
 def score_skills_match(
@@ -198,45 +134,40 @@ def score_skills_match(
     jd_emb: np.ndarray | None = None,
 ) -> tuple[float, list[str], list[str]]:
     """
-    Skills Match Score: weighted average of Jaccard similarity and semantic similarity.
+    Score skill overlap, blending exact matches with semantic similarity.
 
-    Jaccard captures exact skill overlap; semantic similarity catches
-    paraphrases (e.g., 'ML' ↔ 'machine learning').
+    Jaccard captures literal overlap; the embedding term rewards paraphrases such
+    as 'ML' against 'machine learning'. The blend applies only when both
+    embeddings are present, so a half-supplied pair does not score as if the
+    semantic component were zero.
 
     Args:
         resume_skills: Skills extracted from the resume.
         jd_skills: Skills extracted from the job description.
-        resume_emb: Embedding of resume text (for semantic component).
-        jd_emb: Embedding of JD text (for semantic component).
+        resume_emb: Resume embedding, for the semantic term.
+        jd_emb: Job description embedding, for the semantic term.
 
     Returns:
-        (score, matched_skills, missing_skills)
+        (score in [0, 1], matched skills, skills the posting wants but the resume lacks)
     """
     if not resume_skills and not jd_skills:
-        base = 0.5
-        return base, [], []
+        return NEUTRAL_SCORE, [], []
 
-    intersection = resume_skills & jd_skills
     union = resume_skills | jd_skills
-    jaccard = len(intersection) / len(union) if union else 0.0
+    jaccard = len(resume_skills & jd_skills) / len(union) if union else 0.0
 
-    # Semantic component
-    semantic = 0.0
-    if resume_emb is not None and jd_emb is not None:
-        a = np.atleast_1d(resume_emb)
-        b = np.atleast_1d(jd_emb)
-        # Both should already be L2-normalised
-        semantic = float(np.clip(np.dot(a, b), 0.0, 1.0))
+    semantic = _cosine(resume_emb, jd_emb)
+    score = (
+        jaccard
+        if semantic is None
+        else JACCARD_WEIGHT * jaccard + SEMANTIC_WEIGHT * semantic
+    )
 
-    # Blend: 60% Jaccard (exact), 40% semantic (fuzzy)
-    if resume_emb is not None:
-        score = 0.60 * jaccard + 0.40 * semantic
-    else:
-        score = jaccard
-
-    matched = sorted(intersection)
-    missing = sorted(jd_skills - resume_skills)
-    return float(np.clip(score, 0.0, 1.0)), matched, missing
+    return (
+        float(np.clip(score, 0.0, 1.0)),
+        sorted(resume_skills & jd_skills),
+        sorted(jd_skills - resume_skills),
+    )
 
 
 def score_experience_relevance(
@@ -246,56 +177,49 @@ def score_experience_relevance(
     jd_emb: np.ndarray | None = None,
 ) -> float:
     """
-    Experience Relevance Score: semantic similarity of experience sections
-    plus a years-of-experience alignment bonus.
+    Score experience fit from overall semantic similarity plus a years delta.
+
+    Experience sections dominate resume length, so whole-document similarity is a
+    reasonable proxy. The years adjustment rewards meeting the stated requirement
+    and penalises falling short, capped so it cannot dominate the score.
 
     Args:
-        resume_text: Full resume text (section detection done internally).
+        resume_text: Full resume text.
         jd_text: Full job description text.
-        resume_emb: Full resume embedding.
-        jd_emb: Full JD embedding.
+        resume_emb: Resume embedding.
+        jd_emb: Job description embedding.
 
     Returns:
         Score in [0, 1].
     """
-    # Semantic similarity of full texts (experience dominates resume length)
-    semantic = 0.5
-    if resume_emb is not None and jd_emb is not None:
-        semantic = float(
-            np.clip(np.dot(np.atleast_1d(resume_emb), np.atleast_1d(jd_emb)), 0.0, 1.0)
-        )
+    semantic = _cosine(resume_emb, jd_emb)
+    if semantic is None:
+        semantic = NEUTRAL_SCORE
 
-    # Years-of-experience bonus/penalty
-    resume_years_matches = _EXP_PATTERN.findall(resume_text)
-    jd_years_matches = _EXP_PATTERN.findall(jd_text)
+    resume_years = extract_experience_years(resume_text)
+    required_years = required_experience_years(jd_text)
 
-    exp_bonus = 0.0
-    if resume_years_matches and jd_years_matches:
-        resume_yrs = max(float(y) for y in resume_years_matches)
-        jd_yrs = float(jd_years_matches[0])
-        gap = resume_yrs - jd_yrs
+    bonus = 0.0
+    if resume_years and required_years is not None:
+        gap = resume_years - required_years
         if gap >= 0:
-            exp_bonus = 0.1 if gap <= 3 else 0.0
+            bonus = (
+                _EXPERIENCE_MATCH_BONUS
+                if gap <= _EXPERIENCE_OVERQUALIFIED_YEARS
+                else 0.0
+            )
         else:
-            exp_bonus = max(-0.2, gap * 0.05)
+            bonus = max(_EXPERIENCE_MAX_PENALTY, gap * _EXPERIENCE_SHORTFALL_PER_YEAR)
 
-    return float(np.clip(semantic + exp_bonus, 0.0, 1.0))
-
-
-def _detect_education(text: str) -> str:
-    """Detect the highest education level mentioned in text."""
-    for level, pattern in _EDU_PATTERNS:
-        if pattern.search(text):
-            return level
-    return "none"
+    return float(np.clip(semantic + bonus, 0.0, 1.0))
 
 
 def score_education_fit(resume_text: str, jd_text: str) -> float:
     """
-    Education Fit Score: rule-based degree hierarchy comparison.
+    Score the degree-hierarchy gap between the resume and the posting.
 
-    Returns 1.0 if resume meets or exceeds JD requirement,
-    decreasing penalty as the gap widens.
+    Returns 1.0 when the candidate meets or exceeds the requirement, tapering as
+    the shortfall widens.
 
     Args:
         resume_text: Full resume text.
@@ -304,183 +228,204 @@ def score_education_fit(resume_text: str, jd_text: str) -> float:
     Returns:
         Score in [0, 1].
     """
-    resume_edu = _detect_education(resume_text)
-    jd_edu = _detect_education(jd_text)
-
-    resume_rank = _DEGREE_RANK.get(resume_edu, 0)
-    jd_rank = _DEGREE_RANK.get(jd_edu, 4)  # default to bachelors if JD doesn't mention
+    resume_rank = DEGREE_RANK[detect_education_level(resume_text)]
+    jd_rank = DEGREE_RANK[
+        detect_education_level(jd_text, default=_ASSUMED_JD_EDUCATION)
+    ]
 
     gap = resume_rank - jd_rank
-    if gap >= 0:
-        return 1.0
-    elif gap == -1:
-        return 0.7
-    elif gap == -2:
-        return 0.4
-    else:
-        return 0.2
+    if gap > 0:
+        gap = 0
+    return _EDUCATION_GAP_SCORES.get(gap, _EDUCATION_GAP_FLOOR)
 
 
-def _compute_tfidf_weights(
-    tokens: list[str], corpus_tokens: list[str]
-) -> dict[str, float]:
+def keyword_weights(tokens: list[str]) -> dict[str, float]:
     """
-    Compute simplified TF-IDF weights for tokens in a two-document corpus.
+    Weight a document's terms by how much the document emphasises them.
+
+    Weighting is sublinear term frequency, log(1 + count). An IDF factor is
+    deliberately absent: document frequency across a resume/posting pair can only
+    be 1 or 2, so IDF collapses to log(2) for terms in one document and 0 for
+    terms in both — which zeroes out precisely the overlapping terms this score
+    exists to reward. Meaningful IDF would need a background corpus.
 
     Args:
-        tokens: Tokens from the target document.
-        corpus_tokens: Tokens from the other document (for IDF computation).
+        tokens: Tokens of the document being weighted.
 
     Returns:
-        Dict mapping token → TF-IDF weight.
+        Mapping of token to weight.
     """
-    tf: dict[str, float] = {}
-    for tok in tokens:
-        tf[tok] = tf.get(tok, 0) + 1
-    total = max(len(tokens), 1)
-    tf = {k: v / total for k, v in tf.items()}
-
-    # IDF: log(2 / (1 + df)) where df ∈ {0, 1, 2}
-    corpus_set = set(corpus_tokens)
-    weights: dict[str, float] = {}
-    for tok, freq in tf.items():
-        df = (1 if tok in corpus_set else 0) + 1  # +1 for the current doc
-        idf = log(2.0 / df)
-        weights[tok] = freq * idf
-
-    return weights
+    counts: dict[str, int] = {}
+    for token in tokens:
+        counts[token] = counts.get(token, 0) + 1
+    return {token: log(1 + count) for token, count in counts.items()}
 
 
-def score_keyword_alignment(resume_text: str, jd_text: str) -> float:
+def score_keyword_alignment(resume_text: str, jd_text: str, top_k: int) -> float:
     """
-    Keyword Alignment Score: TF-IDF weighted overlap of top-K keywords.
-
-    Identifies the most important keywords in the JD and checks what
-    fraction (by TF-IDF weight) appear in the resume.
+    Score how much of the posting's keyword weight the resume covers.
 
     Args:
         resume_text: Full resume text.
         jd_text: Full job description text.
+        top_k: Number of highest-weighted posting keywords to consider.
 
     Returns:
-        Score in [0, 1].
+        Score in [0, 1]: 1.0 when the resume mentions every top keyword.
     """
-    cfg = _load_config()
-    top_k = cfg["similarity"]["top_k_keywords"]
-
-    resume_tokens = _tokenize(resume_text)
-    jd_tokens = _tokenize(jd_text)
-
+    resume_tokens = tokenize(resume_text)
+    jd_tokens = tokenize(jd_text)
     if not jd_tokens:
-        return 0.5
+        return NEUTRAL_SCORE
 
-    jd_weights = _compute_tfidf_weights(jd_tokens, resume_tokens)
+    weights = keyword_weights(jd_tokens)
+    top_keywords = sorted(weights.items(), key=lambda item: item[1], reverse=True)[
+        :top_k
+    ]
 
-    # Select top-K keywords from JD
-    sorted_kw = sorted(jd_weights.items(), key=lambda x: x[1], reverse=True)[:top_k]
-    if not sorted_kw:
-        return 0.5
-
-    resume_set = set(resume_tokens)
-    total_weight = sum(w for _, w in sorted_kw)
+    total_weight = sum(weight for _, weight in top_keywords)
     if total_weight <= 0:
-        return 0.5
+        return NEUTRAL_SCORE
 
-    matched_weight = sum(w for kw, w in sorted_kw if kw in resume_set)
+    resume_vocabulary = set(resume_tokens)
+    matched_weight = sum(
+        weight for keyword, weight in top_keywords if keyword in resume_vocabulary
+    )
     return float(np.clip(matched_weight / total_weight, 0.0, 1.0))
 
 
-# ── Suggestion generator ──────────────────────────────────────────────────────
+# ── Suggestions ───────────────────────────────────────────────────────────────
 
 
-def generate_suggestions(result: "MatchResult", jd_text: str) -> list[str]:
+def generate_suggestions(result: MatchResult, jd_text: str) -> list[str]:
     """
-    Generate actionable improvement suggestions based on score gaps.
+    Derive actionable advice from the weakest components of a match.
 
     Args:
-        result: MatchResult with component scores and skill lists.
-        jd_text: Job description text for context.
+        result: A scored MatchResult.
+        jd_text: Job description text, used to name the required degree.
 
     Returns:
-        List of suggestion strings, ordered by impact.
+        Suggestions ordered by expected impact; never empty.
     """
-    suggestions = []
+    suggestions: list[str] = []
 
-    if result.skills_match < 0.5 and result.missing_skills:
-        top_missing = result.missing_skills[:5]
+    if result.skills_match < _LOW_SKILLS and result.missing_skills:
+        top_missing = ", ".join(result.missing_skills[:MAX_MISSING_SKILLS_SUGGESTED])
+        suggestions.append(f"Add missing skills to your resume: {top_missing}.")
+
+    if result.skills_match < _VERY_LOW_SKILLS:
         suggestions.append(
-            f"Add missing skills to your resume: {', '.join(top_missing)}."
+            "Your skill set has low overlap with this role. Consider upskilling "
+            "in the required technologies before applying."
         )
 
-    if result.skills_match < 0.3:
+    if result.experience_relevance < _LOW_EXPERIENCE:
         suggestions.append(
-            "Your skill set has low overlap with this role. "
-            "Consider upskilling in the required technologies before applying."
+            "Emphasise relevant experience more prominently. Rewrite bullet "
+            "points to mirror the job description's language."
         )
 
-    if result.experience_relevance < 0.5:
-        suggestions.append(
-            "Emphasise relevant experience more prominently. "
-            "Rewrite bullet points to mirror the job description's language."
-        )
-
-    if result.education_fit < 0.5:
-        jd_edu = _detect_education(jd_text)
-        if jd_edu != "none":
+    if result.education_fit < _LOW_EDUCATION:
+        required = detect_education_level(jd_text)
+        if required != "none":
             suggestions.append(
-                f"This role prefers {jd_edu} degree holders. "
+                f"This role prefers candidates with a {required} qualification. "
                 "Highlight certifications or equivalent experience to compensate."
             )
 
-    if result.keyword_alignment < 0.4:
+    if result.keyword_alignment < _LOW_KEYWORDS:
         suggestions.append(
-            "Your resume is missing key terms from the job posting. "
-            "Mirror the JD's exact phrasing for ATS compatibility."
+            "Your resume is missing key terms from the job posting. Mirror the "
+            "posting's exact phrasing for ATS compatibility."
         )
 
     if not suggestions:
-        if result.final_score >= 0.85:
-            suggestions.append("Strong match — apply with confidence.")
-        else:
-            suggestions.append(
-                "Good match overall. Tailor your summary section to the specific role."
-            )
+        suggestions.append(
+            "Strong match — apply with confidence."
+            if result.final_score >= _STRONG_OVERALL
+            else "Good match overall. Tailor your summary section to this role."
+        )
 
     return suggestions
 
 
-# ── Main scorer ───────────────────────────────────────────────────────────────
+# ── Scorer ────────────────────────────────────────────────────────────────────
 
 
 class MatchScorer:
     """
-    Computes a 4-component match score between a resume and a job description.
+    Scores a resume against a job description across four weighted components.
 
-    Weights are loaded from configs/config.yaml (scoring.weights).
+    Weights, label thresholds, and the keyword cutoff come from
+    configs/config.yaml and are read once at construction.
     """
 
     def __init__(self) -> None:
-        cfg = _load_config()
-        w = cfg["scoring"]["weights"]
-        self.w_skills = w["skills_match"]
-        self.w_exp = w["experience_relevance"]
-        self.w_edu = w["education_fit"]
-        self.w_kw = w["keyword_alignment"]
-        self._thresholds = cfg["scoring"]["thresholds"]
-        logger.debug(
-            f"Scorer weights — skills: {self.w_skills}, exp: {self.w_exp}, "
-            f"edu: {self.w_edu}, kw: {self.w_kw}"
-        )
+        scoring = get_section("scoring")
+        self._weights = scoring["weights"]
+        self._thresholds = scoring["thresholds"]
+        self._top_k_keywords = get_section("similarity")["top_k_keywords"]
+
+        total = sum(self._weights.values())
+        if abs(total - 1.0) > 1e-6:
+            logger.warning(
+                f"Scoring weights sum to {total:.4f}, not 1.0 — overall scores "
+                "will not span the full 0–100 range."
+            )
 
     def _label(self, score_pct: float) -> str:
-        t = self._thresholds
-        if score_pct >= t["excellent"]:
+        if score_pct >= self._thresholds["excellent"]:
             return "Excellent"
-        elif score_pct >= t["good"]:
+        if score_pct >= self._thresholds["good"]:
             return "Good"
-        elif score_pct >= t["fair"]:
+        if score_pct >= self._thresholds["fair"]:
             return "Fair"
         return "Poor"
+
+    def _resolve_embeddings(
+        self,
+        resume_text: str,
+        jd_text: str,
+        resume_emb: np.ndarray | None,
+        jd_emb: np.ndarray | None,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        if resume_emb is not None and jd_emb is not None:
+            return resume_emb, jd_emb
+        try:
+            from src.features.embeddings import get_model
+
+            model = get_model()
+            if resume_emb is None:
+                resume_emb = model.encode(resume_text)
+            if jd_emb is None:
+                jd_emb = model.encode(jd_text)
+        except Exception as exc:
+            logger.warning(f"Embeddings unavailable, scoring on text alone: {exc}")
+            return None, None
+        return resume_emb, jd_emb
+
+    def _resolve_skills(
+        self,
+        resume_text: str,
+        jd_text: str,
+        resume_skills: set[str] | None,
+        jd_skills: set[str] | None,
+    ) -> tuple[set[str], set[str]]:
+        if resume_skills is not None and jd_skills is not None:
+            return resume_skills, jd_skills
+        try:
+            from src.features.ner import get_extractor
+
+            extractor = get_extractor()
+            if resume_skills is None:
+                resume_skills = set(extractor.extract(resume_text).technical_skills)
+            if jd_skills is None:
+                jd_skills = set(extractor.extract(jd_text).technical_skills)
+        except Exception as exc:
+            logger.warning(f"Skill extraction unavailable, using empty sets: {exc}")
+            return set(), set()
+        return resume_skills, jd_skills
 
     def score(
         self,
@@ -492,75 +437,58 @@ class MatchScorer:
         jd_emb: np.ndarray | None = None,
     ) -> MatchResult:
         """
-        Compute the full match score.
+        Score a resume against a job description.
+
+        Any pre-computed input may be supplied to skip the corresponding model
+        call; anything omitted is computed on demand.
 
         Args:
             resume_text: Raw resume text.
             jd_text: Raw job description text.
-            resume_skills: Pre-extracted skills (computed via NER if None).
-            jd_skills: Pre-extracted skills (computed via NER if None).
-            resume_emb: Pre-computed embedding (computed on the fly if None).
-            jd_emb: Pre-computed embedding (computed on the fly if None).
+            resume_skills: Pre-extracted resume skills.
+            jd_skills: Pre-extracted job description skills.
+            resume_emb: Pre-computed resume embedding.
+            jd_emb: Pre-computed job description embedding.
 
         Returns:
-            MatchResult with all scores and suggestions.
+            A fully populated MatchResult.
         """
-        # Lazily compute embeddings if not provided
-        if resume_emb is None or jd_emb is None:
-            try:
-                from src.features.embeddings import get_model
+        resume_emb, jd_emb = self._resolve_embeddings(
+            resume_text, jd_text, resume_emb, jd_emb
+        )
+        resume_skills, jd_skills = self._resolve_skills(
+            resume_text, jd_text, resume_skills, jd_skills
+        )
 
-                model = get_model()
-                if resume_emb is None:
-                    resume_emb = model.encode(resume_text)
-                if jd_emb is None:
-                    jd_emb = model.encode(jd_text)
-            except Exception as e:
-                logger.warning(
-                    f"Embedding unavailable, falling back to text-only scoring: {e}"
-                )
-
-        # Lazily extract skills if not provided
-        if resume_skills is None or jd_skills is None:
-            try:
-                from src.features.ner import get_extractor
-
-                extractor = get_extractor()
-                if resume_skills is None:
-                    resume_skills = set(extractor.extract(resume_text).technical_skills)
-                if jd_skills is None:
-                    jd_skills = set(extractor.extract(jd_text).technical_skills)
-            except Exception as e:
-                logger.warning(f"NER unavailable, using empty skill sets: {e}")
-                resume_skills = set()
-                jd_skills = set()
-
-        # Component scores
-        s_skills, matched, missing = score_skills_match(
+        skills, matched, missing = score_skills_match(
             resume_skills, jd_skills, resume_emb, jd_emb
         )
-        s_exp = score_experience_relevance(resume_text, jd_text, resume_emb, jd_emb)
-        s_edu = score_education_fit(resume_text, jd_text)
-        s_kw = score_keyword_alignment(resume_text, jd_text)
-
-        # Weighted combination
-        final = (
-            self.w_skills * s_skills
-            + self.w_exp * s_exp
-            + self.w_edu * s_edu
-            + self.w_kw * s_kw
+        experience = score_experience_relevance(
+            resume_text, jd_text, resume_emb, jd_emb
         )
-        final = float(np.clip(final, 0.0, 1.0))
+        education = score_education_fit(resume_text, jd_text)
+        keywords = score_keyword_alignment(resume_text, jd_text, self._top_k_keywords)
+
+        final = float(
+            np.clip(
+                self._weights["skills_match"] * skills
+                + self._weights["experience_relevance"] * experience
+                + self._weights["education_fit"] * education
+                + self._weights["keyword_alignment"] * keywords,
+                0.0,
+                1.0,
+            )
+        )
         score_pct = round(final * 100, 1)
 
         result = MatchResult(
             final_score=final,
             score_pct=score_pct,
             label=self._label(score_pct),
-            skills_match=s_skills,
-            experience_relevance=s_exp,
-            education_fit=s_edu,
-            keyword_alignment=s_kw,
+            skills_match=skills,
+            experience_relevance=experience,
+            education_fit=education,
+            keyword_alignment=keywords,
             matched_skills=matched,
             missing_skills=missing,
         )

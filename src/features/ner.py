@@ -1,39 +1,42 @@
 """
-NER and skill extraction module for HireLens.
+Skill and entity extraction for HireLens.
 
 Extracts from resume / job description text:
-  - Technical skills    (matched against skills_taxonomy.json)
-  - Soft skills
-  - Years of experience
-  - Education level
+  - Technical skills    (matched against data/skills_taxonomy.json)
+  - Soft skills and certifications
+  - Years of experience and education level (see src/features/patterns.py)
   - Job titles
 
-Uses spaCy en_core_web_trf (falls back to en_core_web_sm if trf not installed).
-Taxonomy matching uses Aho-Corasick via the `pyahocorasick` library for O(n) throughput.
-Falls back to set-intersection if pyahocorasick is not installed.
+Skill matching runs an Aho-Corasick automaton over the text for O(n) throughput,
+falling back to per-skill regex search when pyahocorasick is unavailable.
+Named entities come from spaCy's en_core_web_trf, falling back to en_core_web_sm
+and finally to a blank pipeline if no model is installed.
 """
 
 import json
 import re
-import sys
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
-import spacy
-import yaml
 from loguru import logger
 from spacy.language import Language
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_CONFIG_PATH = PROJECT_ROOT / "configs" / "config.yaml"
-_TAXONOMY_PATH = PROJECT_ROOT / "data" / "skills_taxonomy.json"
+from src.config import PROJECT_ROOT, get_section
+from src.features.patterns import detect_education_level, extract_experience_years
 
-logger.remove()
-logger.add(
-    sys.stderr,
-    level="INFO",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} | {message}",
+TAXONOMY_PATH = PROJECT_ROOT / "data" / "skills_taxonomy.json"
+
+# spaCy allocates roughly linearly in document length; cap absurd inputs.
+MAX_DOC_CHARS = 100_000
+
+# Job titles rarely run past six words; anything longer is a sentence fragment.
+MAX_TITLE_WORDS = 6
+MAX_TITLES = 10
+
+# Captures a capitalised phrase introduced by a role-indicating word.
+_TITLE_CONTEXT = re.compile(
+    r"(?:as|title|position|role|work(?:ed|ing)?\s+as|currently|previously|senior|junior|lead)\s+"
+    r"([A-Z][a-zA-Z\s]{3,40}?)(?:\sat\s|\sin\s|\s[-–]\s|\.|,|\n)",
 )
 
 
@@ -42,12 +45,12 @@ logger.add(
 
 @dataclass
 class ExtractionResult:
-    """Structured output from NER extraction."""
+    """Structured fields pulled out of a single document."""
 
     technical_skills: list[str] = field(default_factory=list)
     soft_skills: list[str] = field(default_factory=list)
     experience_years: float = 0.0
-    education_level: str = "unknown"
+    education_level: str = "none"
     job_titles: list[str] = field(default_factory=list)
     certifications: list[str] = field(default_factory=list)
     raw_entities: list[dict[str, str]] = field(default_factory=list)
@@ -68,216 +71,198 @@ class ExtractionResult:
         return self.technical_skills + self.soft_skills
 
 
-# ── Education patterns ────────────────────────────────────────────────────────
-
-_EDU_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("phd", re.compile(r"\b(ph\.?d|doctorate|doctoral)\b", re.I)),
-    (
-        "masters",
-        re.compile(r"\b(m\.?s\.?|m\.?eng\.?|m\.?b\.?a\.?|master(?:\'?s)?)\b", re.I),
-    ),
-    (
-        "bachelors",
-        re.compile(
-            r"\b(b\.?s\.?|b\.?e\.?|b\.?tech\.?|bachelor(?:\'?s)?|undergraduate)\b", re.I
-        ),
-    ),
-    ("associate", re.compile(r"\b(associate(?:\'?s)?|a\.?s\.?|a\.?a\.?)\b", re.I)),
-    ("diploma", re.compile(r"\b(diploma|certificate program)\b", re.I)),
-    ("bootcamp", re.compile(r"\b(bootcamp|coding school|nanodegree)\b", re.I)),
-]
-
-# Years of experience patterns: "5 years", "5+ years", "3-5 years", "over 10 years"
-_EXP_PATTERN = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(?:\+|plus)?\s*(?:to\s*\d+\s*)?years?\s*(?:of\s+)?(?:experience|exp\.?|work)",
-    re.I,
-)
-
-# Job title indicators
-_TITLE_CONTEXT = re.compile(
-    r"(?:as|title|position|role|work(?:ed|ing)?\s+as|currently|previously|senior|junior|lead)\s+"
-    r"([A-Z][a-zA-Z\s]{3,40}?)(?:\sat\s|\sin\s|\s[-–]\s|\.|,|\n)",
-)
+# ── Taxonomy ──────────────────────────────────────────────────────────────────
 
 
-# ── Taxonomy loader ───────────────────────────────────────────────────────────
-
-
-def _load_taxonomy() -> tuple[set[str], set[str], set[str]]:
+def load_taxonomy() -> tuple[set[str], set[str], set[str]]:
     """
-    Load the skills taxonomy into three flat sets:
-      (technical_skills, soft_skills, certifications)
+    Load data/skills_taxonomy.json into flat lowercase sets.
+
+    Returns:
+        (technical_skills, soft_skills, certifications)
     """
-    with open(_TAXONOMY_PATH) as f:
-        tax = json.load(f)
+    with open(TAXONOMY_PATH) as f:
+        taxonomy = json.load(f)
 
     technical: set[str] = set()
-    for cat_skills in tax.get("technical", {}).values():
-        technical.update(s.lower() for s in cat_skills)
-    for cat_skills in tax.get("domain", {}).values():
-        technical.update(s.lower() for s in cat_skills)
+    for group in ("technical", "domain"):
+        for skills in taxonomy.get(group, {}).values():
+            technical.update(skill.lower() for skill in skills)
 
-    soft: set[str] = {s.lower() for s in tax.get("soft", [])}
-    certs: set[str] = {s.lower() for s in tax.get("certifications", [])}
+    soft = {skill.lower() for skill in taxonomy.get("soft", [])}
+    certifications = {skill.lower() for skill in taxonomy.get("certifications", [])}
 
-    return technical, soft, certs
+    return technical, soft, certifications
 
 
-# ── Aho-Corasick multi-string search (optional speedup) ──────────────────────
+# ── Skill matching ────────────────────────────────────────────────────────────
 
 
 def _build_automaton(skills: set[str]) -> Any | None:
-    """Build an Aho-Corasick automaton if the library is available."""
+    """Build an Aho-Corasick automaton, or return None if the library is missing."""
+    if not skills:
+        return None
     try:
         import ahocorasick
-
-        A = ahocorasick.Automaton()
-        for skill in skills:
-            A.add_word(skill, skill)
-        A.make_automaton()
-        return A
     except ImportError:
         return None
 
-
-def _search_with_automaton(text: str, automaton: Any) -> list[str]:
-    found = []
-    text_lower = text.lower()
-    for _, skill in automaton.iter(text_lower):
-        # Ensure whole-word match
-        start = text_lower.find(skill)
-        if start == -1:
-            continue
-        end = start + len(skill)
-        before = text_lower[start - 1] if start > 0 else " "
-        after = text_lower[end] if end < len(text_lower) else " "
-        if not (before.isalnum() or before == "-") and not (
-            after.isalnum() or after == "-"
-        ):
-            found.append(skill)
-    return found
-
-
-def _search_with_set(text: str, skills: set[str]) -> list[str]:
-    """Fallback: naive substring search when Aho-Corasick is unavailable."""
-    text_lower = text.lower()
-    found = []
+    automaton = ahocorasick.Automaton()
     for skill in skills:
-        # Add word-boundary check for short skills to avoid false positives
-        if len(skill) <= 3:
-            if re.search(rf"\b{re.escape(skill)}\b", text_lower):
-                found.append(skill)
-        elif skill in text_lower:
-            found.append(skill)
+        automaton.add_word(skill, skill)
+    automaton.make_automaton()
+    return automaton
+
+
+def _is_whole_word(text: str, start: int, end: int) -> bool:
+    """
+    True if text[start:end] is not embedded in a larger token.
+
+    A hyphen counts as part of the surrounding token so that searching for
+    'react' does not match inside 'react-native', which is its own skill.
+    """
+    before = text[start - 1] if start > 0 else " "
+    after = text[end] if end < len(text) else " "
+    return not (before.isalnum() or before == "-") and not (
+        after.isalnum() or after == "-"
+    )
+
+
+def _search_with_automaton(text: str, automaton: Any) -> set[str]:
+    """
+    Find every whole-word taxonomy skill in the text.
+
+    `Automaton.iter` yields the end offset of each hit, which is what the
+    boundary check must use — resolving the skill's position with `str.find`
+    instead would test the first occurrence in the document rather than this one.
+    """
+    lowered = text.lower()
+    found: set[str] = set()
+    for end_index, skill in automaton.iter(lowered):
+        start = end_index - len(skill) + 1
+        if _is_whole_word(lowered, start, end_index + 1):
+            found.add(skill)
     return found
 
 
-# ── spaCy loader ──────────────────────────────────────────────────────────────
+def _search_with_regex(text: str, skills: Iterable[str]) -> set[str]:
+    """
+    Fallback matcher used when pyahocorasick is not installed.
+
+    Every skill is word-bounded, not just short ones: a plain substring test
+    matches 'java' inside 'javascript' and 'go' inside 'algorithm'.
+    """
+    lowered = text.lower()
+    return {
+        skill
+        for skill in skills
+        if re.search(rf"(?<![\w-]){re.escape(skill)}(?![\w-])", lowered)
+    }
 
 
-def _load_spacy(config: dict) -> Language:
-    """Load spaCy model with transformer fallback to sm."""
-    trf_model = config["model"]["ner"]["model"]
-    fallback = config["model"]["ner"]["fallback_model"]
+# ── spaCy ─────────────────────────────────────────────────────────────────────
 
-    try:
-        nlp = spacy.load(trf_model)
-        logger.info(f"Loaded spaCy model: {trf_model}")
-        return nlp
-    except OSError:
-        logger.warning(f"{trf_model} not found, trying {fallback}")
+
+def _load_spacy(ner_config: dict) -> Language:
+    """Load the configured spaCy model, degrading to the fallback then to blank."""
+    import spacy
+
+    for model_name in (ner_config["model"], ner_config["fallback_model"]):
         try:
-            nlp = spacy.load(fallback)
-            logger.info(f"Loaded spaCy model: {fallback}")
+            nlp = spacy.load(model_name)
+            logger.info(f"Loaded spaCy model: {model_name}")
             return nlp
         except OSError:
-            logger.warning("No spaCy model found — NER entity extraction disabled.")
-            return spacy.blank("en")
+            logger.warning(f"spaCy model '{model_name}' not installed.")
+
+    logger.warning(
+        "No spaCy model available — entity extraction disabled. "
+        "Run scripts/install_models.sh to install them."
+    )
+    return spacy.blank("en")
 
 
-# ── Main extractor ────────────────────────────────────────────────────────────
+# ── Extractor ─────────────────────────────────────────────────────────────────
 
 
 class NERExtractor:
     """
-    Extracts structured information from resume / JD text.
+    Extracts structured information from resume / job description text.
 
-    Combines:
-      - Taxonomy-based skill matching (fast, curated)
-      - spaCy NER for named entities (persons, orgs, titles)
-      - Regex patterns for education level and experience years
+    Combines curated taxonomy matching for skills, spaCy NER for named entities,
+    and regex patterns for education level and years of experience.
     """
 
     def __init__(self) -> None:
-        with open(_CONFIG_PATH) as f:
-            self._config = yaml.safe_load(f)
+        ner_config = get_section("model")["ner"]
+        self._batch_size = ner_config.get("batch_size", 128)
 
-        self._technical, self._soft, self._certs = _load_taxonomy()
+        self._technical, self._soft, self._certifications = load_taxonomy()
         logger.info(
             f"Taxonomy loaded: {len(self._technical)} technical, "
-            f"{len(self._soft)} soft, {len(self._certs)} cert skills"
+            f"{len(self._soft)} soft, {len(self._certifications)} certification skills"
         )
 
-        # Try to build Aho-Corasick automata for O(n) search
-        self._tech_automaton = _build_automaton(self._technical)
-        self._soft_automaton = _build_automaton(self._soft)
-        self._cert_automaton = _build_automaton(self._certs)
-        if self._tech_automaton:
-            logger.debug("Using Aho-Corasick for skill matching.")
-        else:
-            logger.debug(
-                "Using naive skill matching (pip install pyahocorasick for speedup)."
+        self._automatons = {
+            "technical": _build_automaton(self._technical),
+            "soft": _build_automaton(self._soft),
+            "certifications": _build_automaton(self._certifications),
+        }
+        if self._automatons["technical"] is None:
+            logger.warning(
+                "pyahocorasick is not installed — falling back to regex skill "
+                "matching, which is markedly slower on bulk uploads."
             )
 
-        self._nlp = _load_spacy(self._config)
+        self._nlp = _load_spacy(ner_config)
 
-    def _match_skills(
-        self, text: str, taxonomy: set[str], automaton: Any | None
-    ) -> list[str]:
-        if automaton:
-            return _search_with_automaton(text, automaton)
-        return _search_with_set(text, taxonomy)
+    # ── Internals ─────────────────────────────────────────────────────────────
 
-    def _extract_education(self, text: str) -> str:
-        """Return the highest detected education level."""
-        for level, pattern in _EDU_PATTERNS:
-            if pattern.search(text):
-                return level
-        return "unknown"
-
-    def _extract_experience_years(self, text: str) -> float:
-        """Return the maximum years of experience mentioned."""
-        matches = _EXP_PATTERN.findall(text)
-        if not matches:
-            return 0.0
-        return max(float(m) for m in matches)
+    def _match_skills(self, text: str, group: str, taxonomy: set[str]) -> list[str]:
+        automaton = self._automatons[group]
+        found = (
+            _search_with_automaton(text, automaton)
+            if automaton is not None
+            else _search_with_regex(text, taxonomy)
+        )
+        return sorted(found)
 
     def _extract_job_titles(self, doc: Any) -> list[str]:
-        """Extract job titles using spaCy NER + context patterns."""
-        titles = []
+        """Collect job titles from spaCy entities and role-context regex matches."""
+        titles: list[str] = []
 
-        # spaCy entity-based (WORK_OF_ART, JOB are not standard, use context)
         for ent in doc.ents:
-            if ent.label_ in ("PERSON", "ORG"):
-                continue  # skip non-title entities
-            if ent.label_ in ("WORK_OF_ART",) and len(ent.text.split()) <= 5:
+            if ent.label_ == "WORK_OF_ART" and len(ent.text.split()) <= MAX_TITLE_WORDS:
                 titles.append(ent.text.strip())
 
-        # Regex context patterns
         for match in _TITLE_CONTEXT.finditer(doc.text):
             title = match.group(1).strip()
-            if 2 <= len(title.split()) <= 6:
+            if 2 <= len(title.split()) <= MAX_TITLE_WORDS:
                 titles.append(title)
 
-        # Deduplicate preserving order
         seen: set[str] = set()
-        unique = []
-        for t in titles:
-            t_lower = t.lower()
-            if t_lower not in seen:
-                seen.add(t_lower)
-                unique.append(t)
-        return unique[:10]
+        unique: list[str] = []
+        for title in titles:
+            key = title.lower()
+            if key not in seen:
+                seen.add(key)
+                unique.append(title)
+        return unique[:MAX_TITLES]
+
+    def _build_result(self, text: str, doc: Any) -> ExtractionResult:
+        return ExtractionResult(
+            technical_skills=self._match_skills(text, "technical", self._technical),
+            soft_skills=self._match_skills(text, "soft", self._soft),
+            certifications=self._match_skills(
+                text, "certifications", self._certifications
+            ),
+            experience_years=extract_experience_years(text),
+            education_level=detect_education_level(text),
+            job_titles=self._extract_job_titles(doc),
+            raw_entities=[{"text": ent.text, "label": ent.label_} for ent in doc.ents],
+        )
+
+    # ── Public API ────────────────────────────────────────────────────────────
 
     def extract(self, text: str) -> ExtractionResult:
         """
@@ -287,76 +272,29 @@ class NERExtractor:
             text: Raw resume or job description text.
 
         Returns:
-            ExtractionResult with all extracted fields.
+            ExtractionResult; empty if the text is blank.
         """
         if not text or not text.strip():
             return ExtractionResult()
 
-        # Run spaCy pipeline
-        doc = self._nlp(text[:100_000])  # cap to avoid OOM on huge texts
-
-        # Skills
-        technical = self._match_skills(text, self._technical, self._tech_automaton)
-        soft = self._match_skills(text, self._soft, self._soft_automaton)
-        certs = self._match_skills(text, self._certs, self._cert_automaton)
-
-        # Raw NER entities
-        raw_entities = [{"text": ent.text, "label": ent.label_} for ent in doc.ents]
-
-        return ExtractionResult(
-            technical_skills=sorted(set(technical)),
-            soft_skills=sorted(set(soft)),
-            experience_years=self._extract_experience_years(text),
-            education_level=self._extract_education(text),
-            job_titles=self._extract_job_titles(doc),
-            certifications=sorted(set(certs)),
-            raw_entities=raw_entities,
-        )
+        return self._build_result(text, self._nlp(text[:MAX_DOC_CHARS]))
 
     def extract_batch(
-        self, texts: list[str], batch_size: int = 32
+        self, texts: list[str], batch_size: int | None = None
     ) -> list[ExtractionResult]:
         """
-        Extract from a list of texts using spaCy's pipe() for efficiency.
+        Extract from many documents, sharing one spaCy pipeline pass.
 
         Args:
-            texts: List of text strings.
-            batch_size: spaCy pipe batch size.
+            texts: Raw document texts.
+            batch_size: spaCy pipe batch size. Falls back to the configured value.
 
         Returns:
-            List of ExtractionResult objects.
+            One ExtractionResult per input, in the same order.
         """
-        from tqdm import tqdm
-
-        results = []
-        docs = list(
-            self._nlp.pipe(
-                [t[:100_000] for t in texts],
-                batch_size=batch_size,
-            )
-        )
-
-        for text, doc in tqdm(
-            zip(texts, docs), total=len(texts), desc="NER extraction"
-        ):
-            technical = self._match_skills(text, self._technical, self._tech_automaton)
-            soft = self._match_skills(text, self._soft, self._soft_automaton)
-            certs = self._match_skills(text, self._certs, self._cert_automaton)
-            raw_entities = [{"text": ent.text, "label": ent.label_} for ent in doc.ents]
-
-            results.append(
-                ExtractionResult(
-                    technical_skills=sorted(set(technical)),
-                    soft_skills=sorted(set(soft)),
-                    experience_years=self._extract_experience_years(text),
-                    education_level=self._extract_education(text),
-                    job_titles=self._extract_job_titles(doc),
-                    certifications=sorted(set(certs)),
-                    raw_entities=raw_entities,
-                )
-            )
-
-        return results
+        truncated = [text[:MAX_DOC_CHARS] for text in texts]
+        docs = self._nlp.pipe(truncated, batch_size=batch_size or self._batch_size)
+        return [self._build_result(text, doc) for text, doc in zip(texts, docs)]
 
 
 # ── Module-level singleton ────────────────────────────────────────────────────
@@ -365,7 +303,7 @@ _default_extractor: NERExtractor | None = None
 
 
 def get_extractor() -> NERExtractor:
-    """Return the shared NERExtractor (loads on first call)."""
+    """Return the shared NERExtractor, loading models on first call."""
     global _default_extractor
     if _default_extractor is None:
         _default_extractor = NERExtractor()
