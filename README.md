@@ -391,6 +391,8 @@ HireLens/
 │   │   └── embeddings.py     # Sentence-transformer wrapper + cache
 │   ├── evaluation/
 │   │   └── metrics.py        # NDCG, MRR, AUC-ROC, NER F1
+│   ├── monitoring/
+│   │   └── monitor.py        # Metric-regression check + retraining trigger
 │   └── data/
 │       ├── ingestion.py      # Raw CSV loading + cleaning
 │       ├── preprocessing.py  # Text normalization
@@ -422,13 +424,14 @@ HireLens/
 │   └── conftest.py           # Fixtures with mocked ML service
 ├── .github/workflows/
 │   └── ci-cd.yml             # 4-job CI/CD pipeline
+├── docs/
+│   └── metrics_report.json   # Full evaluation + latency report
 ├── docker-compose.yml        # Local dev (postgres + redis)
 ├── docker-compose.prod.yml   # Production (all 4 services)
-├── requirements.txt
-├── params.yaml               # DVC pipeline parameters
+├── requirements.txt          # Runtime dependencies
+├── requirements-dev.txt      # Test + lint dependencies
 ├── dvc.yaml                  # DVC stage definitions
-├── metrics_report.json       # Full evaluation + latency report
-└── configs/config.yaml       # Master configuration
+└── configs/config.yaml       # Master configuration (also the DVC params file)
 ```
 
 ---

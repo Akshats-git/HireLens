@@ -7,38 +7,25 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-*.pyd
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
+/build/
+/dist/
+/sdist/
+/wheels/
 *.egg-info/
-.installed.cfg
 *.egg
-MANIFEST
-*.manifest
-*.spec
 
 # ── Virtual Environments ──────────────────────────────────────────────────────
 .venv/
 venv/
 env/
 ENV/
-.env.local
-.env.*.local
 
 # ── Environment / Secrets ─────────────────────────────────────────────────────
 .env
+.env.local
+.env.*.local
+.env.prod
 !.env.example
 *.pem
 *.key
@@ -48,16 +35,15 @@ secrets/
 credentials.json
 
 # ── ML / Model Artifacts ──────────────────────────────────────────────────────
+# Trailing comments are not supported in .gitignore patterns — keep lines bare.
 models/cache/
 models/fine_tuned/
 models/checkpoints/
 *.bin
 *.safetensors
-*.ot
 *.onnx
 *.pt
 *.pth
-!tests/**/*.pt        # Allow tiny test fixtures
 
 # ── Data (DVC manages these) ──────────────────────────────────────────────────
 data/raw/
@@ -70,12 +56,11 @@ uploads/
 !data/synthetic/.gitkeep
 
 # ── DVC ───────────────────────────────────────────────────────────────────────
-/tmp/
 .dvc/cache/
 .dvc/tmp/
 
 # ── MLflow ────────────────────────────────────────────────────────────────────
-mlflow/mlruns/
+mlruns/
 mlflow/artifacts/
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
@@ -86,19 +71,15 @@ logs/
 # ── Testing ───────────────────────────────────────────────────────────────────
 .pytest_cache/
 .coverage
+.coverage.*
 coverage.xml
 htmlcov/
 .tox/
-nosetests.xml
-*.cover
-*.coverage.*
 
 # ── Node / Frontend ───────────────────────────────────────────────────────────
 frontend/node_modules/
 frontend/dist/
 frontend/build/
-frontend/.next/
-frontend/.nuxt/
 frontend/.cache/
 *.tsbuildinfo
 
@@ -116,7 +97,6 @@ Thumbs.db
 
 # ── Jupyter ───────────────────────────────────────────────────────────────────
 .ipynb_checkpoints/
-*.ipynb_checkpoints
 
 # ── Misc ─────────────────────────────────────────────────────────────────────
 *.tmp

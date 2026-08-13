@@ -5,6 +5,10 @@
 # Show DAG:                dvc dag
 # Check metrics:           dvc metrics show
 # Compare runs:            dvc metrics diff
+#
+# Tunable parameters live in configs/config.yaml. The `params` block of each
+# stage lists the keys that stage actually consumes, so editing an unrelated
+# key does not force a rerun.
 # =============================================================================
 
 stages:
@@ -15,12 +19,10 @@ stages:
     deps:
       - src/data/ingestion.py
       - src/data/data_pipeline.py
-      - configs/config.yaml
     params:
-      - params.yaml:
-          - data.random_seed
-          - data.min_resume_chars
-          - data.max_resume_chars
+      - configs/config.yaml:
+          - data.resume_dataset
+          - data.jobs_dataset
     outs:
       - data/raw/resumes_clean.csv
       - data/raw/jobs_clean.csv
@@ -37,13 +39,11 @@ stages:
       - src/data/data_pipeline.py
       - data/raw/resumes_clean.csv
       - data/raw/jobs_clean.csv
-      - configs/config.yaml
     params:
-      - params.yaml:
-          - data.train_val_test_split
+      - configs/config.yaml:
           - data.random_seed
-          - data.remove_pii
-          - data.normalize_whitespace
+          - data.preprocessing
+          - data.train_val_test_split
     outs:
       - data/processed/resumes_processed.csv
       - data/processed/jobs_processed.csv
@@ -52,45 +52,33 @@ stages:
       - data/processed/test_pairs.csv
     desc: "Build train/val/test pairs with weak-supervision labels"
 
-  # ── 3. Synthetic Augmentation ────────────────────────────────────────────────
+  # ── 3. Evaluation Set Construction ───────────────────────────────────────────
   synthetic:
-    cmd: >-
-      python -m src.data.data_pipeline --stage synthetic
-      --n-pairs ${synthetic.num_samples}
+    cmd: python -m src.data.data_pipeline --stage synthetic
     deps:
       - src/data/synthetic_gen.py
       - src/data/data_pipeline.py
-      - data/processed/train_pairs.csv
-      - data/skills_taxonomy.json
-      - configs/config.yaml
+      - data/raw/jobs_clean.csv
+      - data/raw/eval_dataset/resume_dataset_1200.csv
     params:
-      - params.yaml:
-          - synthetic.num_samples
-          - synthetic.noise_level
-          - synthetic.random_seed
+      - configs/config.yaml:
+          - data.random_seed
+          - data.eval_set
     outs:
       - data/synthetic/synthetic_pairs.csv
-    desc: "Augment training data with skill-permutation synthetic pairs"
+    desc: "Score structured resumes against real job postings to build a held-out eval set"
 
   # ── 4. Model Training ────────────────────────────────────────────────────────
   train:
-    cmd: >-
-      python -m src.models.train
-      --epochs ${fine_tuning.num_train_epochs}
-      --batch-size ${fine_tuning.per_device_train_batch_size}
-      --run-name dvc-auto
+    cmd: python -m src.models.train --run-name dvc-auto
     deps:
       - src/models/train.py
-      - src/features/embeddings.py
       - data/processed/train_pairs.csv
       - data/processed/val_pairs.csv
-      - data/synthetic/synthetic_pairs.csv
-      - configs/config.yaml
     params:
-      - params.yaml:
-          - fine_tuning
-          - model.base_name
-          - model.max_seq_length
+      - configs/config.yaml:
+          - model.base
+          - model.fine_tuning
     outs:
       - models/fine_tuned/hirelens_matcher:
           cache: true
@@ -105,17 +93,17 @@ stages:
     cmd: python -m src.evaluation.metrics
     deps:
       - src/evaluation/metrics.py
-      - src/models/scorer.py
       - src/features/ner.py
+      - src/data/synthetic_gen.py
       - models/fine_tuned/hirelens_matcher
       - data/processed/test_pairs.csv
-      - configs/config.yaml
+      - data/raw/eval_dataset/resume_dataset_1200.csv
+      - data/skills_taxonomy.json
     params:
-      - params.yaml:
-          - evaluation.k_values
-          - evaluation.num_eval_samples
-          - evaluation.target_metrics
-          - scoring.weights
+      - configs/config.yaml:
+          - model.base.name
+          - model.ner
+          - evaluation
     metrics:
       - logs/evaluation_report.json:
           cache: false

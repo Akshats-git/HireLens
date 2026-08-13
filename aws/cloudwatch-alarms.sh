@@ -114,7 +114,7 @@ create_alarm "hirelens-instance-down" \
     --treat-missing-data breaching
 
 # ── 6. ML accuracy drop (custom metric) ──────────────────────────────────────
-# monitor.py emits this metric to CloudWatch when precision_at_1 drops.
+# src/monitoring/monitor.py emits this metric to CloudWatch when precision_at_1 drops.
 # The alarm fires if the metric appears (value=1 means retraining was triggered).
 create_alarm "hirelens-model-degraded" \
     --alarm-description "Model accuracy dropped below threshold — retraining triggered" \

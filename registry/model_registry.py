@@ -24,7 +24,7 @@ from mlflow import MlflowClient
 
 from registry.config import (
     EXPERIMENT_NAME,
-    PRODUCTION_THRESHOLDS,
+    PROMOTION_THRESHOLDS,
     REGISTERED_MODEL_NAME,
     get_client,
     get_or_create_experiment,
@@ -56,7 +56,7 @@ def _get_run_metrics(client: MlflowClient, run_id: str) -> dict:
 
 def _passes_thresholds(metrics: dict) -> tuple[bool, list[str]]:
     failures = []
-    for metric, threshold in PRODUCTION_THRESHOLDS.items():
+    for metric, threshold in PROMOTION_THRESHOLDS.items():
         actual = metrics.get(metric)
         if actual is None:
             failures.append(f"  {metric}: MISSING (required ≥ {threshold})")
