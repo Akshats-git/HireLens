@@ -67,7 +67,10 @@ _STOPWORDS = frozenset(
     """.split()
 )
 
-_TOKEN_PATTERN = re.compile(r"\b[a-z][a-z0-9+#.]+\b")
+# Words of two or more characters, plus dotted and symbol-suffixed technology
+# names. The trailing symbols need their own branch: a closing \b cannot follow
+# '+' or '#', so a single pattern ending in \b drops "c++" and "c#" outright.
+_TOKEN_PATTERN = re.compile(r"\b[a-z](?:[a-z0-9]+(?:\.[a-z0-9]+)*|[+#]+)")
 
 
 # ── Result ────────────────────────────────────────────────────────────────────

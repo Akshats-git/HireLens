@@ -32,6 +32,15 @@ MAX_HEADER_CHARS = 60
 # A section needs more than this many characters to count as populated.
 MIN_SECTION_CHARS = 20
 
+PAIR_COLUMNS = (
+    "resume_id",
+    "resume_text",
+    "job_description",
+    "label",
+    "resume_category",
+    "pair_type",
+)
+
 
 def _mlflow_tracking_uri() -> str:
     return os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
@@ -361,7 +370,17 @@ def build_training_pairs(
         for job_index in rng.choice(negatives, size=sample_size, replace=False):
             add_pair(int(job_index), 0.0, "negative")
 
-    pairs_df = pd.DataFrame(pairs)
+    # Named columns are declared explicitly so that an empty result — every
+    # category unmatched — is still a well-formed frame rather than one with no
+    # columns at all, which would fail on the label lookups below and downstream.
+    pairs_df = pd.DataFrame(pairs, columns=PAIR_COLUMNS)
+    if pairs_df.empty:
+        logger.warning(
+            "No training pairs were built: no posting matched any resume category. "
+            "Check the category keywords against the postings corpus."
+        )
+        return pairs_df
+
     logger.info(
         f"Built {len(pairs_df)} pairs: "
         f"{(pairs_df['label'] == 1.0).sum()} positive, "
