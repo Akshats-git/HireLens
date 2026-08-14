@@ -9,10 +9,16 @@ function getColor(score) {
   return '#ef4444';                  // red-500
 }
 
-export default function CircularScore({ score, size = 160, showLabel = true }) {
-  const offset = CIRCUMFERENCE - (score / 100) * CIRCUMFERENCE;
+/**
+ * Animated score ring.
+ *
+ * The `label` comes from the API, which derives it from the thresholds in
+ * configs/config.yaml. Recomputing it here would drift from the server the
+ * moment those thresholds change.
+ */
+export default function CircularScore({ score, label, size = 160, showLabel = true }) {
   const color = getColor(score);
-  const label = score >= 80 ? 'Excellent' : score >= 70 ? 'Good' : score >= 50 ? 'Fair' : 'Poor';
+  const offset = CIRCUMFERENCE - (score / 100) * CIRCUMFERENCE;
 
   return (
     <div className="flex flex-col items-center gap-2">
@@ -42,7 +48,6 @@ export default function CircularScore({ score, size = 160, showLabel = true }) {
           />
         </svg>
 
-        {/* Centered text overlay */}
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <motion.span
             initial={{ opacity: 0, scale: 0.5 }}
@@ -57,7 +62,7 @@ export default function CircularScore({ score, size = 160, showLabel = true }) {
         </div>
       </div>
 
-      {showLabel && (
+      {showLabel && label && (
         <motion.span
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}

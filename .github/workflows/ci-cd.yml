@@ -93,8 +93,6 @@ jobs:
 
       - name: Production build
         working-directory: frontend
-        env:
-          VITE_API_BASE_URL: http://localhost:8000
         run: npm run build
 
   # ============================================================================
@@ -155,7 +153,6 @@ jobs:
           tags: |
             ghcr.io/${{ steps.meta.outputs.owner }}/hirelens-frontend:${{ steps.meta.outputs.sha }}
             ghcr.io/${{ steps.meta.outputs.owner }}/hirelens-frontend:latest
-          build-args: VITE_API_URL=http://localhost:8000
 
       - name: Save SHA for deploy
         run: echo "${{ steps.meta.outputs.sha }}" > image_sha.txt

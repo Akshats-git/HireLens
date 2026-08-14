@@ -1,0 +1,56 @@
+# =============================================================================
+# Docker build context exclusions
+#
+# Both images build from the repository root, so without this file the daemon
+# receives the datasets, model weights, and virtualenv — several gigabytes that
+# no build stage reads.
+# =============================================================================
+
+# ── Version control ───────────────────────────────────────────────────────────
+.git/
+.gitignore
+.github/
+
+# ── Data and models (fetched at runtime or via DVC) ───────────────────────────
+data/
+!data/skills_taxonomy.json
+models/
+mlruns/
+mlflow/
+logs/
+uploads/
+.dvc/cache/
+.dvc/tmp/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ── Node ──────────────────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Local tooling ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# ── Docs and dev-only files ───────────────────────────────────────────────────
+docs/
+tests/
+docker-compose*.yml
+*.md
+!README.md

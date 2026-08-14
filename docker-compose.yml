@@ -154,12 +154,12 @@ services:
       context: .
       dockerfile: docker/Dockerfile.frontend
       args:
-        VITE_API_URL: http://localhost:8000
+        # Vite inlines env vars at build time, so the API origin must be a build
+        # arg — setting it as a runtime `environment` entry on an nginx
+        # container has no effect. Empty means same-origin via the /api proxy.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
     container_name: hirelens-frontend
     restart: unless-stopped
-    environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
-      VITE_APP_ENV: ${APP_ENV:-development}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     networks:

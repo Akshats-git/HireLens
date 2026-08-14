@@ -1,8 +1,14 @@
 import axios from 'axios';
 
+// Same-origin by default: nginx proxies /api to the backend in both the
+// container and the EC2 host config, and Vite proxies it in development.
+// Override at build time for split-origin deployments.
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+
 const http = axios.create({
-  baseURL: '/api',
-  timeout: 90_000, // ML inference can take ~5s; bulk 50 resumes ~30s
+  baseURL: BASE_URL,
+  // A single resume takes a few seconds; a 50-resume batch can take ~30s.
+  timeout: 180_000,
 });
 
 // Normalise error messages from FastAPI detail field

@@ -170,7 +170,7 @@ export default function Candidate() {
                 <div id="results-panel" className="space-y-6">
                   {/* Score card */}
                   <div className="p-6 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/40 flex flex-col sm:flex-row items-center gap-6">
-                    <CircularScore key={result.score} score={result.score} size={152} />
+                    <CircularScore key={result.score} score={result.score} label={result.label} size={152} />
                     <div className="flex-1 space-y-1 text-center sm:text-left">
                       <p className="text-xs text-slate-400 dark:text-slate-500 uppercase tracking-wider">Overall Match</p>
                       <p className="text-4xl font-extrabold text-slate-900 dark:text-white">{result.score.toFixed(1)}</p>
