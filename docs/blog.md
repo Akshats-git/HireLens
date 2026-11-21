@@ -63,9 +63,9 @@ On the full retrieval evaluation across 712 held-out pairs:
 | AUC-ROC | 0.80 | **0.837** |
 | Precision@1 | | **0.896** |
 | MRR | | **0.948** |
-| NER F1 | 0.88 | **0.771** |
+| NER F1 | 0.88 | **0.804** |
 
-Most targets were exceeded by a comfortable margin. The NER F1 score for skill extraction landed at 0.771, which I will talk about in the challenges section.
+Most targets were exceeded by a comfortable margin. The NER F1 score for skill extraction landed at 0.804, which I will talk about in the challenges section.
 
 ---
 
@@ -116,7 +116,7 @@ The fix was being deliberate about negatives. They come only from postings that 
 
 ### NER F1 Score Falling Short
 
-The skill extraction NER score landed at 0.771 against a target of 0.88. This was the one metric that did not hit its goal.
+The skill extraction NER score landed at 0.804 against a target of 0.88. This was the one metric that did not hit its goal.
 
 The root cause is taxonomy coverage. The taxonomy covers 595 technical terms, but real resumes mention thousands of tools, frameworks, and technologies. Anything outside the taxonomy gets missed or misclassified, and that pulls down recall.
 
@@ -148,7 +148,7 @@ Multi-stage builds helped at the margins, but the real win was configuring GitHu
 
 **Caching is not optional.** The SHA-256 keyed embedding cache was one of the better decisions I made. Without it, scoring 50 resumes repeatedly against the same job description would re-embed the job description 50 times. The cache drops that to one call per unique text.
 
-**Pick your battles with metrics.** NDCG@10 of 0.962 is excellent. NER F1 of 0.771 is acceptable but below target. Both are real measurements of real behavior. Chasing every metric to 100% is not the goal. Understanding what each one means and which failures actually matter to users is.
+**Pick your battles with metrics.** NDCG@10 of 0.962 is excellent. NER F1 of 0.804 is acceptable but below target. Both are real measurements of real behavior. Chasing every metric to 100% is not the goal. Understanding what each one means and which failures actually matter to users is.
 
 **Small models are viable.** MiniLM-L6-v2 encodes 384 dimensions and fits in under 100MB. Fine-tuned on domain-specific data, it produces results that match what much larger models would give on this specific task. Bigger is not always better when the domain is narrow and the training signal is clean.
 

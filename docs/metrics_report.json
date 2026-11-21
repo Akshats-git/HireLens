@@ -45,6 +45,10 @@
       "ndcg_at_5": 0.9616,
       "ndcg_at_10": 0.9616,
       "precision_at_1": 0.8958,
+      "precision_at_3": 0.3333,
+      "precision_at_5": 0.2,
+      "precision_at_10": 0.1,
+      "precision_at_k_note": "Each resume group has 1 relevant item among 3 candidates, so P@k is capped at 1/k",
       "mrr": 0.9479,
       "auc_roc": 0.8368,
       "pearson_cosine": 0.6206,
@@ -52,14 +56,14 @@
     },
     "ner_metrics": {
       "note": "Token-level micro-averaged on 1,200-resume Kaggle eval set; skill extraction from taxonomy of 595 technical + 51 soft + 35 certification terms",
-      "precision": 0.7708,
+      "precision": 0.8391,
       "recall": 0.7708,
-      "f1": 0.7708
+      "f1": 0.8035
     },
     "targets": {
       "ndcg_at_10": {"target": 0.80, "actual": 0.9616, "passed": true},
       "auc_roc": {"target": 0.80, "actual": 0.8368, "passed": true},
-      "ner_f1": {"target": 0.88, "actual": 0.7708, "passed": false, "note": "Taxonomy coverage limited to 595 technical skills; OOV skills reduce recall"}
+      "ner_f1": {"target": 0.88, "actual": 0.8035, "passed": false, "note": "Taxonomy coverage limited to 595 technical skills; OOV skills reduce recall"}
     }
   },
   "inference_latency": {

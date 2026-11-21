@@ -57,7 +57,7 @@ CI/CD (GitHub Actions → ghcr.io → EC2)
 ──────────────────────────────────────
 push to main
     │
-    ├── Job 1: Backend lint (black + flake8) + pytest (166 tests)
+    ├── Job 1: Backend lint (black + flake8) + pytest (208 tests)
     ├── Job 2: Frontend lint (ESLint) + Vite production build
     ├── Job 3: Build & push Docker images → ghcr.io
     └── Job 4: SSH deploy to EC2 → docker compose pull + rolling restart
@@ -70,15 +70,17 @@ push to main
 | Metric | Value | Target | Status |
 |--------|-------|--------|--------|
 | NDCG@10 | **0.962** | 0.80 | ✓ |
-| Precision@1 | **0.896** | — | — |
+| Precision@1 | **0.896** | 0.85 | ✓ |
 | AUC-ROC | **0.837** | 0.80 | ✓ |
 | MRR | **0.948** | — | — |
-| NER F1 (skill extraction) | **0.771** | 0.88 | — |
+| NER F1 (skill extraction) | **0.804** (P 0.839 / R 0.771) | 0.88 | ✗ |
 | Scoring latency (GPU, single) | **165 ms** | <500 ms | ✓ |
 | Bulk 50 resumes | **8.1 s** (162 ms/resume) | — | — |
 | Model size | **608 MB** | — | — |
-| Test suite | **166 tests (unit + integration)** | — | ✓ |
+| Test suite | **208 tests (unit + integration)** | — | ✓ |
 
+> **Note on Precision@k:** each resume is ranked against exactly 3 postings (1 relevant, 2 not), so Precision@k is capped at 1/k (P@3 = 0.333, P@5 = 0.200, P@10 = 0.100 regardless of model quality). Precision@1, MRR and NDCG are the informative ranking metrics here.
+>
 > **Caveat:** retrieval metrics (NDCG, MRR, Precision@1, AUC-ROC) are computed on 712 held-out pairs whose labels come from the same category-keyword weak supervision used for training, so they measure agreement with that heuristic, not real hiring outcomes. `src/data/eval_dataset.py` builds an independent rule-scored reference set. Evaluation on 712 held-out resume–job pairs. Latency measured on GTX 1650; AWS t3.micro (CPU-only) is ~3–5× slower.
 
 ---
@@ -286,7 +288,7 @@ bash aws/deploy.sh --bootstrap
 
 Every push to `main` triggers the CI/CD pipeline:
 
-1. Python lint + 166 unit and integration tests
+1. Python lint + 208 unit and integration tests
 2. Frontend ESLint + Vite build check
 3. Build multi-stage Docker images and push to `ghcr.io`
 4. SSH into EC2, pull new images, rolling restart (postgres/redis kept running), smoke test
