@@ -449,13 +449,21 @@ HireLens/
 
 ## Screenshots
 
-Try the live app at **http://13.51.207.145**:
+Live demo: **http://13.51.207.145**
 
-| View | Description |
-|------|-------------|
-| Landing page | Role selection (Candidate / Recruiter) |
-| Candidate view | Upload resume PDF + paste job description → score breakdown with matched/missing skills |
-| Recruiter view | Upload up to 50 resumes → ranked table with score badges, filter by score/skills/experience |
+| Landing | Mobile (390px) |
+|---------|----------------|
+| ![Landing page](docs/screenshots/landing.png) | ![Landing page on mobile](docs/screenshots/landing-mobile.png) |
+
+**Candidate view** — upload one resume + paste a job description → overall score, four-part breakdown, matched/missing skills, suggestions:
+
+![Candidate view](docs/screenshots/candidate.png)
+
+**Recruiter view** — upload up to 50 resumes → ranked list with score badges, filterable by min score, must-have skills and experience level:
+
+![Recruiter view](docs/screenshots/recruiter.png)
+
+> Screenshots use synthetic sample resumes. On the live t3.micro (CPU-only) a warm single-resume request completes in roughly 0.4–1 s end to end; the first request after a restart is much slower while models load.
 
 ---
 
