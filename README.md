@@ -57,7 +57,7 @@ CI/CD (GitHub Actions → ghcr.io → EC2)
 ──────────────────────────────────────
 push to main
     │
-    ├── Job 1: Backend lint (black + flake8) + pytest (30 tests)
+    ├── Job 1: Backend lint (black + flake8) + pytest (166 tests)
     ├── Job 2: Frontend lint (ESLint) + Vite production build
     ├── Job 3: Build & push Docker images → ghcr.io
     └── Job 4: SSH deploy to EC2 → docker compose pull + rolling restart
@@ -77,9 +77,9 @@ push to main
 | Scoring latency (GPU, single) | **165 ms** | <500 ms | ✓ |
 | Bulk 50 resumes | **8.1 s** (162 ms/resume) | — | — |
 | Model size | **608 MB** | — | — |
-| Test suite | **30/30 passing** | — | ✓ |
+| Test suite | **166 tests (unit + integration)** | — | ✓ |
 
-> Evaluation on 712 held-out resume–job pairs. Latency measured on GTX 1650; AWS t3.micro (CPU-only) is ~3–5× slower.
+> **Caveat:** retrieval metrics (NDCG, MRR, Precision@1, AUC-ROC) are computed on 712 held-out pairs whose labels come from the same category-keyword weak supervision used for training, so they measure agreement with that heuristic, not real hiring outcomes. `src/data/eval_dataset.py` builds an independent rule-scored reference set. Evaluation on 712 held-out resume–job pairs. Latency measured on GTX 1650; AWS t3.micro (CPU-only) is ~3–5× slower.
 
 ---
 
@@ -286,7 +286,7 @@ bash aws/deploy.sh --bootstrap
 
 Every push to `main` triggers the CI/CD pipeline:
 
-1. Python lint + 30 unit tests
+1. Python lint + 166 unit and integration tests
 2. Frontend ESLint + Vite build check
 3. Build multi-stage Docker images and push to `ghcr.io`
 4. SSH into EC2, pull new images, rolling restart (postgres/redis kept running), smoke test
@@ -345,8 +345,14 @@ bash aws/deploy.sh
 **Response:**
 ```json
 {
-  "score_pct": 82.5,
+  "score": 82.5,
   "label": "Good",
+  "breakdown": {
+    "skills_match": 0.85,
+    "experience_relevance": 0.80,
+    "education_fit": 0.90,
+    "keyword_alignment": 0.72
+  },
   "matched_skills": ["python", "docker", "aws"],
   "missing_skills": ["kubernetes", "terraform"],
   "suggestions": ["Add Kubernetes experience to match senior DevOps requirements"],
@@ -424,7 +430,8 @@ HireLens/
 │   ├── s3-setup.sh           # S3 bucket creation with encryption
 │   └── cloudwatch-agent.json # CloudWatch log/metric config
 ├── tests/
-│   ├── integration/          # FastAPI endpoint tests (30 total)
+│   ├── integration/          # FastAPI endpoint tests
+│   ├── unit/                 # ML core, services, data pipeline
 │   └── conftest.py           # Fixtures with mocked ML service
 ├── .github/workflows/
 │   └── ci-cd.yml             # 4-job CI/CD pipeline
@@ -442,7 +449,7 @@ HireLens/
 
 ## Screenshots
 
-> _Add screenshots here after the UI is finalized._
+Try the live app at **http://13.51.207.145**:
 
 | View | Description |
 |------|-------------|
@@ -454,4 +461,4 @@ HireLens/
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
