@@ -201,6 +201,17 @@ jobs:
             set -euo pipefail
             cd /opt/hirelens
 
+            # Free space first: the old and new backend images can't both fit on
+            # a small disk. Drop unused images, and if still tight, retire the old
+            # backend image before pulling (brief downtime, but the pull succeeds).
+            docker image prune -af
+            AVAIL_KB=$(df --output=avail / | tail -1)
+            if [ "$AVAIL_KB" -lt 4000000 ]; then
+              docker compose -f docker-compose.prod.yml stop backend
+              docker compose -f docker-compose.prod.yml rm -f backend
+              docker image rm "ghcr.io/$GHCR_USER/hirelens-backend:latest" || true
+            fi
+
             # Pull latest images from ghcr.io
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             docker compose -f docker-compose.prod.yml pull backend frontend
@@ -213,6 +224,7 @@ jobs:
             # Smoke test
             sleep 20
             curl -fsSL http://localhost:8000/health | grep '"status":"healthy"'
+            docker image prune -f
             echo "Deploy $IMAGE_SHA complete."
 
       - name: Notify success
